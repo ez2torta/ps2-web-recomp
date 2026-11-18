@@ -329,6 +329,9 @@ void machine_state(state::Stream &s) {
 bool save_state(std::vector<std::uint8_t> &data) {
     try {
         state::Writer w;
+        // Repeated snapshots of the same game are usually similar in size.
+        // Keep the previous output intact until serialization succeeds.
+        w.out.reserve(data.size());
         machine_state(w);
         data = std::move(w.out);
         return true;
