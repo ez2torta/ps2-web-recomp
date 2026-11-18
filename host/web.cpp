@@ -24,6 +24,19 @@ EM_JS_DEPS(ps2web, "$stringToNewUTF8,$UTF8ToString");
 
 EM_JS(void, ps2web_fetch, (const char *url, double offset, int size, void *out, std::atomic<std::uint32_t> *state), {
     const target = UTF8ToString(url);
+    const started = performance.now();
+    const report = (ok, bytes) => {
+        const now = performance.now();
+        const stats = globalThis.ps2DiscMetrics || (globalThis.ps2DiscMetrics = {since: now, count: 0, bytes: 0, ms: 0, maxMs: 0, failed: 0});
+        const elapsed = now - started;
+        stats.count++; stats.bytes += bytes; stats.ms += elapsed;
+        stats.maxMs = Math.max(stats.maxMs, elapsed); if (!ok) stats.failed++;
+        if (now - stats.since >= 10000) {
+            const data = {...stats, windowMs: now - stats.since};
+            globalThis.ps2DiscMetrics = {since: now, count: 0, bytes: 0, ms: 0, maxMs: 0, failed: 0};
+            fetch(new URL('/__disc_metrics', target), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)}).catch(() => {});
+        }
+    };
     const finish = (value) => {
         Atomics.store(HEAP32, state >> 2, value);
         Atomics.notify(HEAP32, state >> 2);
@@ -35,11 +48,13 @@ EM_JS(void, ps2web_fetch, (const char *url, double offset, int size, void *out, 
                 let bytes = new Uint8Array(buffer);
                 if (response.status === 200) bytes = bytes.subarray(offset, offset + size);
                 HEAPU8.set(bytes.subarray(0, Math.min(bytes.length, size)), out);
+                report(true, bytes.length);
                 finish(3);
             });
         })
         .catch((e) => {
             console.warn('disc read failed', e);
+            report(false, 0);
             finish(4);
         });
 });

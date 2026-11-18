@@ -14,6 +14,19 @@
 *.ps2
 *.irx
 *.IRX
+*.afs
+*.AFS
+*.adx
+*.ADX
+*.grc
+*.GRC
+*.uni
+*.UNI
+*.wasm
+*.wasm.gz
+*.data
+*.data.gz
+/SLPS_*
 
 /generated/
 /tools/

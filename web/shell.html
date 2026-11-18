@@ -155,6 +155,7 @@
 <button id="exit-fullscreen" type="button">Exit fullscreen</button>
 <div id="overlay"><div id="panel"><p id="help" hidden></p><button id="start" disabled>Loading…</button></div></div>
 <template id="engine">{{{ SCRIPT }}}</template>
+<script src="file-disc.js"></script>
 <script>
 const statusEl = document.getElementById('status');
 const CARD_DIR = '/memcard', CARD_FILE = '/memcard/Mcd001.ps2', CARD_BYTES = 8650752;
@@ -170,11 +171,23 @@ function note(text) {
 }
 const LOG_TAIL = 200, LOG_INTERPRETED = 60;
 const logTail = [], logInterpreted = [];
+const repeatedSifWarnings = new Map();
 let haltReason = '';
 function keepLog(text) {
   if (text.startsWith('[ee] interpreting') && logInterpreted.length < LOG_INTERPRETED) logInterpreted.push(text);
   logTail.push(text);
   if (logTail.length > LOG_TAIL) logTail.shift();
+}
+function printLog(text) {
+  if (/^\[sif\] command 0x[0-9a-f]+ has no handler \(from ee buffer 0x[0-9a-f]+\)$/i.test(text)) {
+    if (!repeatedSifWarnings.has(text) && repeatedSifWarnings.size >= 64) repeatedSifWarnings.delete(repeatedSifWarnings.keys().next().value);
+    const count = (repeatedSifWarnings.get(text) || 0) + 1;
+    repeatedSifWarnings.set(text, count);
+    if (count > 4 && (count & (count - 1)) !== 0) return;
+    if (count > 1) text += ' (seen ' + count + ' times)';
+  }
+  keepLog(text);
+  console.log(text);
 }
 const reportButton = document.getElementById('report');
 reportButton.addEventListener('click', async () => {
@@ -1115,8 +1128,8 @@ var Module = {
     aaLabel.title = available ? 'Smooth jagged edges, applied immediately' : 'Antialiasing needs direct WebGPU presentation';
     applyVideo();
   },
-  print: (text) => { keepLog(text); console.log(text); },
-  printErr: (text) => { keepLog(text); console.log(text); },
+  print: printLog,
+  printErr: printLog,
   setStatus: (text) => {
     if (!text || Module.gpuInfo) return;
     const progress = text.match(/^Downloading data\.\.\. \((\d+)\/\d+\)/);
@@ -1133,6 +1146,9 @@ var Module = {
       try {
         FS.mkdir(CARD_DIR);
         FS.mount(IDBFS, {}, CARD_DIR);
+        // The runtime opens /memcard; variants can mount their own IDBFS
+        // directory while preserving that path through an in-memory symlink.
+        if (CARD_DIR !== '/memcard') FS.symlink(CARD_DIR, '/memcard');
         Module.addRunDependency('card');
         FS.syncfs(true, (err) => {
           if (err) console.warn('memory card: could not read browser storage', err);
@@ -1145,7 +1161,7 @@ var Module = {
     for (const [key, value] of params) if (key.startsWith('PS2_')) Module.ENV[key] = value;
     Module.ENV.PS2_SCALE = scale;
     Module.addRunDependency('disc');
-    Promise.all([fetch(Module.discUrl, { method: 'HEAD' }), chooseGpu().catch((e) => 'GPU check failed: ' + e)]).then(([r, gpu]) => {
+    Promise.all([fetch(Module.discUrl, { method: 'HEAD' }), chooseGpu().catch((e) => 'GPU check failed: ' + e), window.ps2FileDiscReady || Promise.resolve()]).then(([r, gpu]) => {
       Module.discSize = Number(r.headers.get('content-length')) || 0;
       Module.gpuInfo = gpu;
       if (Module.gpuHelp && !missing.length) {

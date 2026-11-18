@@ -12,6 +12,7 @@ It also relays the messages that connect a host page to the guests it invites
 """
 
 import http.server
+import hashlib
 import json
 import os
 import re
@@ -42,6 +43,19 @@ if '--host' in sys.argv:
     del sys.argv[at:at + 2]
 BUILD = os.path.abspath(sys.argv[1])
 DISC = os.path.abspath(sys.argv[2])
+DISC_IDENTITY = None
+DISC_STAT = None
+if os.environ.get('PS2_FILE_DISC_MANIFEST'):
+    with open(os.environ['PS2_FILE_DISC_MANIFEST'], encoding='utf-8') as manifest_file:
+        manifest = json.load(manifest_file)
+    with open(DISC, 'rb') as disc_file:
+        DISC_STAT = os.fstat(disc_file.fileno())
+        DISC_IDENTITY = hashlib.file_digest(disc_file, 'sha256').hexdigest()
+    if manifest.get('image_size') != DISC_STAT.st_size or manifest.get('image_sha256') != DISC_IDENTITY:
+        raise SystemExit('file-disc manifest does not match disc image')
+ALT_BUILD = os.path.abspath(os.environ['PS2_ALT_BUILD']) if os.environ.get('PS2_ALT_BUILD') else None
+ALT_DISC = os.path.abspath(os.environ['PS2_ALT_DISC']) if os.environ.get('PS2_ALT_DISC') else None
+FILE_BUILD = os.path.abspath(os.environ['PS2_FILE_DISC_BUILD']) if os.environ.get('PS2_FILE_DISC_BUILD') else None
 PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8620
 ROOMS = {}
 ROOMS_CHANGED = threading.Condition()
@@ -54,6 +68,24 @@ TYPES = {'.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/w
 class Handler(http.server.BaseHTTPRequestHandler):
     def target(self):
         path = self.path.split('?', 1)[0]
+        if path.startswith('/filedisc/') and FILE_BUILD and DISC_IDENTITY:
+            name = path[len('/filedisc/'):]
+            if name == 'disc.iso':
+                return DISC
+            if not name:
+                name = 'ps2web.html'
+            full = os.path.realpath(os.path.join(FILE_BUILD, name))
+            root = os.path.realpath(FILE_BUILD)
+            return full if os.path.commonpath((root, full)) == root and os.path.isfile(full) else None
+        if path.startswith('/china/') and ALT_BUILD and ALT_DISC:
+            name = path[len('/china/'):]
+            if name == 'disc.iso':
+                return ALT_DISC
+            if not name:
+                name = 'ps2web.html'
+            full = os.path.realpath(os.path.join(ALT_BUILD, name))
+            root = os.path.realpath(ALT_BUILD)
+            return full if os.path.commonpath((root, full)) == root and os.path.isfile(full) else None
         if path in ('/', '/index.html'):
             path = '/ps2web.html'
         if path == '/disc.iso':
@@ -74,6 +106,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(length))
         self.send_header('Accept-Ranges', 'bytes')
         self.send_header('Cache-Control', 'no-cache')
+        if path == DISC and DISC_IDENTITY:
+            stat = os.stat(DISC)
+            if (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) == (DISC_STAT.st_dev, DISC_STAT.st_ino, DISC_STAT.st_size, DISC_STAT.st_mtime_ns):
+                self.send_header('X-Disc-Sha256', DISC_IDENTITY)
         self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
         self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
         self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
@@ -108,6 +144,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_json({'messages': messages, 'next': after + len(messages)})
 
     def do_POST(self):
+        if self.path == '/__file_disc_metrics' and os.environ.get('PS2_LOG_DISC_READS') == '1':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if length <= 0 or length > 2048:
+                    raise ValueError('invalid length')
+                data = json.loads(self.rfile.read(length))
+                fields = ('assetRequests', 'assetBytes', 'cacheHits', 'memoryHits', 'isoRequests', 'isoBytes', 'zeroBytes', 'fallbacks')
+                values = [data[key] for key in fields]
+                if any(type(value) is not int or not 0 <= value < 10**12 for value in values):
+                    raise ValueError('invalid metric')
+            except (ValueError, KeyError, TypeError):
+                self.send_error(400)
+                return
+            print('[file-disc-client] files=%d file_bytes=%d cache_hits=%d memory_hits=%d iso=%d iso_bytes=%d zero_bytes=%d fallbacks=%d' % tuple(values), flush=True)
+            self.send_json({'ok': True})
+            return
+        if self.path == '/__disc_metrics' and os.environ.get('PS2_LOG_DISC_READS') == '1':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if length <= 0 or length > 2048:
+                    raise ValueError('invalid length')
+                data = json.loads(self.rfile.read(length))
+                fields = ('count', 'bytes', 'ms', 'maxMs', 'failed', 'windowMs')
+                values = [data[key] for key in fields]
+                if any(type(value) not in (int, float) or not 0 <= value < 1e12 for value in values):
+                    raise ValueError('invalid metric')
+            except (ValueError, KeyError, TypeError):
+                self.send_error(400)
+                return
+            print('[disc-client] requests=%d bytes=%d total_ms=%.1f max_ms=%.1f failed=%d window_ms=%.1f' % tuple(values), flush=True)
+            self.send_json({'ok': True})
+            return
         match = ROOM_PATH.match(self.path.split('?', 1)[0])
         length = int(self.headers.get('Content-Length', '0'))
         if not match or length > 65536:
@@ -178,15 +246,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_response(200)
         self.headers_for(path, end - start + 1)
-        with open(path, 'rb') as f:
-            f.seek(start)
-            left = end - start + 1
-            while left > 0:
-                chunk = f.read(min(left, 1 << 20))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                left -= len(chunk)
+        left = end - start + 1
+        began = time.monotonic()
+        try:
+            with open(path, 'rb') as f:
+                f.seek(start)
+                while left > 0:
+                    chunk = f.read(min(left, 1 << 20))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        finally:
+            if path in (DISC, ALT_DISC) and os.environ.get('PS2_LOG_DISC_READS') == '1':
+                print('[disc-read] range=%d-%d bytes=%d duration_ms=%.1f complete=%s' %
+                      (start, end, end - start + 1 - left,
+                       (time.monotonic() - began) * 1000, left == 0), flush=True)
 
     def do_PUT(self):
         path = urllib.parse.unquote(self.path.split('?', 1)[0])
