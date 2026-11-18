@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/ninja_jobs.sh"
 EMSDK="${EMSDK:-$ROOT/tools/emsdk}"
 EMSDK_VERSION="6.0.11"
 web=1
@@ -21,5 +22,5 @@ fi
 
 . "$ROOT/scripts/cxx.sh"
 cmake -S "$ROOT" -B "$ROOT/build/tools" -G Ninja -DCMAKE_BUILD_TYPE=Release "${cxx_flags[@]}" > /dev/null
-ninja -C "$ROOT/build/tools" eerecomp vurecomp
+ps2_ninja -C "$ROOT/build/tools" eerecomp vurecomp
 echo "== ready"

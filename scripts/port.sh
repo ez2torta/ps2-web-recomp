@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 here="$ROOT/scripts"
+. "$here/ninja_jobs.sh"
 
 usage() {
   cat <<'EOF'
@@ -143,7 +144,7 @@ build_native() {
   elif [ "$(sed -n 's/^PS2_GAME_FLAGS:STRING=//p' "$native/CMakeCache.txt")" != "$game_flags" ]; then
     cmake -S "$ROOT" -B "$native" -DPS2_GAME_FLAGS="$game_flags" > /dev/null
   fi
-  ninja -C "$native" ps2run > "$native/ninja.log" 2>&1 || { tail -30 "$native/ninja.log"; exit 1; }
+  ps2_ninja -C "$native" ps2run > "$native/ninja.log" 2>&1 || { tail -30 "$native/ninja.log"; exit 1; }
 }
 
 echo "== [4/6] exploring"
