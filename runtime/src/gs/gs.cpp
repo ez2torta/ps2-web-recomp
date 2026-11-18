@@ -901,7 +901,13 @@ void write_packed(std::uint32_t reg, const Reg128 &q) {
     static const char *const seq = std::getenv("PS2_TRACE_GSSEQ");
     if (seq) [[unlikely]] {
         static std::uint64_t n = 0, start = std::strtoull(seq, nullptr, 10);
-        if (++n >= start && n < start + 100000) std::fprintf(stderr, "[gs] w %02X %016llX\n", reg, static_cast<unsigned long long>(q.d[0]));
+        if (++n >= start && n < start + 100000) {
+            if (reg == 0x0E)
+                std::fprintf(stderr, "[gs] w %02X %016llX ad=%02X\n", reg,
+                             static_cast<unsigned long long>(q.d[0]), static_cast<unsigned>(q.d[1] & 0xFFu));
+            else
+                std::fprintf(stderr, "[gs] w %02X %016llX\n", reg, static_cast<unsigned long long>(q.d[0]));
+        }
     }
     switch (reg) {
     case 0x0: write(0x00, q.d[0] & 0x7FFu); break;

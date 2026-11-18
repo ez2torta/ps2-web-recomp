@@ -2,6 +2,8 @@
 
 For a native software-rendered diagnostic run, `PS2_CAPTURE` selects frames to record. `PS2_CAPTURE_TEXTURES=1` adds decoded PPM texture images; `PS2_CAPTURE_RAW=1` additionally writes index bytes and the 512-entry active CLUT for indexed textures. The CLUT is written as little-endian 32-bit entries, and the indices are one byte per texel in row-major order at the dimensions shown in the PPM header. These extra files are only written for the software rasterizer. They describe the texture and active CLUT at the start of each captured draw batch, not necessarily the original uploaded resource.
 
+For a register-write trace, set `PS2_TRACE_GSSEQ=1`. The trace prints the packed GS register number and its 64-bit value. For packed `A+D` writes (`reg=0E`), it also prints `ad=NN`, the GS register address stored in the low byte of the second qword. The trace is limited to 100,000 writes and is diagnostic only; it does not validate the register values or explain their effect.
+
 ```sh
 mkdir -p /tmp/ps2-capture
 PS2_GS=software PS2_ONE_THREAD=1 \
