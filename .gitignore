@@ -33,6 +33,8 @@
 /build/
 
 *.ppm
+*.indices
+*.clut
 *.wav
 __pycache__/
 

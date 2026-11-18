@@ -578,6 +578,27 @@ void dump_texture(const State &s, std::uint64_t tex0) {
             std::fwrite(px, 1, 3, f);
         }
     std::fclose(f);
+    // Raw indexed data is meaningful here only while the software rasterizer
+    // owns VRAM. Keep it opt-in: captures may contain game-derived data.
+    if ((eight || four) && cpu_raster() && std::getenv("PS2_CAPTURE_RAW")) {
+        const std::string base = g_dir + "/" + name;
+        if (std::FILE *indices = std::fopen((base + ".indices").c_str(), "wb")) {
+            for (std::uint32_t y = 0; y < h; ++y)
+                for (std::uint32_t x = 0; x < w; ++x) {
+                    const std::uint8_t index = static_cast<std::uint8_t>(read_pixel(psm, tbp, tbw, x, y));
+                    std::fwrite(&index, 1, 1, indices);
+                }
+            std::fclose(indices);
+        }
+        if (std::FILE *clut = std::fopen((base + ".clut").c_str(), "wb")) {
+            for (std::uint32_t color : s.clut) {
+                const std::uint8_t bytes[4] = {static_cast<std::uint8_t>(color), static_cast<std::uint8_t>(color >> 8),
+                                               static_cast<std::uint8_t>(color >> 16), static_cast<std::uint8_t>(color >> 24)};
+                std::fwrite(bytes, 1, 4, clut);
+            }
+            std::fclose(clut);
+        }
+    }
     std::fprintf(g_log, "texture\t%s\tdraw %llu\n", name, static_cast<unsigned long long>(g_draws));
 }
 
