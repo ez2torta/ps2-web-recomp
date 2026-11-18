@@ -89,6 +89,9 @@ std::vector<std::int16_t> g_audio;
 bool g_record = false;
 std::function<void(const std::int16_t *, std::size_t)> g_sink;
 bool g_output_suppressed = false;
+bool g_capture_active = false, g_capture_overflow = false;
+std::size_t g_capture_limit = 0;
+std::vector<std::int16_t> g_capture;
 std::uint64_t g_next_tick = 0;
 bool g_tick_pending = false;
 
@@ -330,6 +333,10 @@ void tick() {
     if (count && ++ticks % 15000 == 0)
         std::fprintf(stderr, "[spu2] %.1f voices per batch (attack %.1f decay %.1f sustain %.1f release %.1f)\n", static_cast<double>(active) / ticks,
                      static_cast<double>(phases[1]) / ticks, static_cast<double>(phases[2]) / ticks, static_cast<double>(phases[3]) / ticks, static_cast<double>(phases[4]) / ticks);
+    if (g_capture_active && !g_capture_overflow) {
+        if (g_capture.size() + kBatch * 2 > g_capture_limit) g_capture_overflow = true;
+        else g_capture.insert(g_capture.end(), out, out + kBatch * 2);
+    }
     if (!g_output_suppressed) {
         if (g_record) g_audio.insert(g_audio.end(), out, out + kBatch * 2);
         if (g_sink) g_sink(out, kBatch);
@@ -587,7 +594,36 @@ void dma(int core, std::uint32_t madr, std::uint32_t words, bool to_spu, int cha
 void stop_dma(int core) { g_cores[core].transfers.clear(); }
 
 void set_sink(std::function<void(const std::int16_t *, std::size_t)> sink) { g_sink = std::move(sink); }
-void suppress_output(bool suppressed) { g_output_suppressed = suppressed; }
+void discard_capture() {
+    g_capture_active = false;
+    g_capture_overflow = false;
+    g_capture_limit = 0;
+    std::vector<std::int16_t>().swap(g_capture);
+}
+void suppress_output(bool suppressed) {
+    if (!suppressed) discard_capture();
+    g_output_suppressed = suppressed;
+}
+bool begin_capture(std::size_t max_frames) {
+    constexpr std::size_t max_capture_frames = 240000; // five seconds at 48 kHz
+    if (!g_output_suppressed || g_capture_active || !max_frames || max_frames > max_capture_frames) return false;
+    try {
+        std::vector<std::int16_t> fresh;
+        fresh.reserve(max_frames * 2);
+        g_capture.swap(fresh);
+        g_capture_limit = max_frames * 2;
+        g_capture_overflow = false;
+        g_capture_active = true;
+        return true;
+    } catch (const std::exception &) { return false; }
+}
+bool finish_capture(std::vector<std::int16_t> &samples) {
+    if (!g_capture_active) return false;
+    if (g_capture_overflow) { discard_capture(); return false; }
+    samples = std::move(g_capture);
+    discard_capture();
+    return true;
+}
 
 void dump_voices() {
     for (int c = 0; c < 2; ++c)

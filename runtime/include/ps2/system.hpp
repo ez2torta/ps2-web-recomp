@@ -171,5 +171,11 @@ void set_audio_sink(std::function<void(const std::int16_t *samples, std::size_t 
 // Experimental, emulation-thread only: discard host audio output while SPU2
 // continues to advance. Does not remove samples already sent to the host.
 void suppress_audio_output(bool suppressed);
+// Experimental stereo capture while output is suppressed. The bounded
+// capture is discarded on overflow or when suppression is disabled; a failed
+// finish leaves the destination unchanged. Use on the emulation thread only.
+bool begin_audio_capture(std::size_t max_frames);
+bool finish_audio_capture(std::vector<std::int16_t> &samples);
+void discard_audio_capture();
 
 }

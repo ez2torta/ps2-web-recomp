@@ -702,5 +702,8 @@ void set_pad_connected(int pad, bool connected) { iop::sio2::set_connected(pad, 
 std::uint16_t pad_rumble(int pad) { return iop::sio2::rumble(pad); }
 void set_audio_sink(std::function<void(const std::int16_t *, std::size_t)> sink) { iop::spu2::set_sink(std::move(sink)); }
 void suppress_audio_output(bool suppressed) { iop::spu2::suppress_output(suppressed); }
+bool begin_audio_capture(std::size_t max_frames) { return iop::spu2::begin_capture(max_frames); }
+bool finish_audio_capture(std::vector<std::int16_t> &samples) { return iop::spu2::finish_capture(samples); }
+void discard_audio_capture() { iop::spu2::discard_capture(); }
 
 }

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace ps2::state {
 class Stream;
@@ -22,5 +23,8 @@ void dump_audio(const char *path);
 void dump_voices();
 void set_sink(std::function<void(const std::int16_t *samples, std::size_t frames)> sink);
 void suppress_output(bool suppressed);
+bool begin_capture(std::size_t max_frames);
+bool finish_capture(std::vector<std::int16_t> &samples);
+void discard_capture();
 
 }
