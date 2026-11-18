@@ -2,6 +2,7 @@
 
 #include "cpu.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -98,6 +99,19 @@ int run();
 // This is not a speculative transaction: memory card writes, audio callbacks,
 // and other host effects can occur. Save states do not contain card contents.
 bool run_frames(std::uint64_t count);
+// Experimental card isolation primitives. Use only on the emulation thread.
+// These do not suppress audio or other host effects, and are not save states.
+struct CardSnapshot {
+    bool present = false;
+    std::vector<std::uint8_t> data;
+    std::size_t address = 0;
+    std::uint8_t term = 0x55;
+    bool dirty = false;
+    std::uint32_t quiet = 0;
+};
+bool capture_card(CardSnapshot &out);
+bool restore_card(const CardSnapshot &snapshot);
+void defer_card_flush(bool deferred);
 void halt(const std::string &reason);
 bool save_state(const std::string &path);
 // Invoke at a safe point on the emulation thread, as with file-based states.

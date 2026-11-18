@@ -12,7 +12,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <fstream>
+#include <utility>
 #include <vector>
 
 namespace ps2::iop::sio2 {
@@ -66,6 +68,7 @@ Pad g_pads[2];
 bool g_plugged[2] = {true, false};
 Feel g_feel[2];
 Card g_card;
+bool g_card_flush_deferred = false;
 Dma g_dma[2];
 
 void no_device() { g_stat |= 0xC000u | (0x10000u << (g_index & 15u)); }
@@ -331,6 +334,7 @@ void reset() {
 }
 
 void flush_cards() {
+    if (g_card_flush_deferred) return;
     Card &c = g_card;
     if (!c.dirty || ++c.quiet < 50) return;
     c.dirty = false;
@@ -417,6 +421,43 @@ void set_connected(int pad, bool connected) {
 
 std::uint16_t rumble(int pad) { return pad >= 0 && pad < 2 ? g_feel[pad].rumble.load(std::memory_order_relaxed) : 0; }
 
+bool capture_card(CardSnapshot &out) {
+    try {
+        CardSnapshot snapshot;
+        snapshot.present = g_card.present;
+        snapshot.data = g_card.data;
+        snapshot.address = g_card.address;
+        snapshot.term = g_card.term;
+        snapshot.dirty = g_card.dirty;
+        snapshot.quiet = g_card.quiet;
+        out = std::move(snapshot);
+        return true;
+    } catch (const std::exception &) { return false; }
+}
+
+bool restore_card(const CardSnapshot &snapshot) {
+    if ((snapshot.present && snapshot.data.size() != kCardBytes) ||
+        (!snapshot.present && (!snapshot.data.empty() || snapshot.dirty)) || snapshot.address > kCardBytes) return false;
+    try {
+        auto data = snapshot.data;
+        g_card.data = std::move(data);
+        g_card.present = snapshot.present;
+        g_card.address = snapshot.address;
+        g_card.term = snapshot.term;
+        g_card.dirty = snapshot.dirty;
+        g_card.quiet = snapshot.quiet;
+        return true;
+    } catch (const std::exception &) { return false; }
+}
+
+void defer_card_flush(bool deferred) { g_card_flush_deferred = deferred; }
+
+}
+
+namespace ps2 {
+bool capture_card(CardSnapshot &out) { return iop::sio2::capture_card(out); }
+bool restore_card(const CardSnapshot &snapshot) { return iop::sio2::restore_card(snapshot); }
+void defer_card_flush(bool deferred) { iop::sio2::defer_card_flush(deferred); }
 }
 
 namespace ps2::iop::sio2 {

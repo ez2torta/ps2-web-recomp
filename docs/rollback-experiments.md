@@ -1,0 +1,7 @@
+# Experimental rollback primitives
+
+`save_state` into a byte vector and `run_frames` must be called at a safe point on the emulation thread. These primitives do not form a rollback implementation. Normal save states do not contain the memory card contents.
+
+For an experiment that needs to undo card changes, `capture_card` copies the current card contents and metadata to a `CardSnapshot`, `defer_card_flush(true)` prevents the delayed card flush from writing to the host, and `restore_card` restores a previously captured card snapshot. The caller must explicitly choose when to restore or keep a card snapshot, and must eventually call `defer_card_flush(false)`. While flushing is deferred, the card's quiet-frame counter does not advance; a confirmed card write may consequently reach the host later than it would otherwise. Failed card capture or restore leaves the previous output or current card unchanged.
+
+These APIs do not isolate audio, presentation, game callbacks, disk reads or any other external effects. They do not confirm that a speculative state is correct or make snapshots compatible across versions. Do not use them for real online rollback until those effects, concurrent access and failure handling have been designed and tested. The optional native `card_snapshot_test` uses a synthetic temporary card to exercise capture, deferral, discard and confirmation.
