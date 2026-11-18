@@ -17,8 +17,8 @@ The existing `scripts/serve.py` supplies these headers and behaviors. It is an H
 
 ## Existing KOF XI build
 
-The Japan file-disc preload build is generated at `build/web-kofxi-filedisc-preload`. The ISO and build contain game data and should remain private. The service definition under the local `deploy/` directory currently serves `build/web-kofxi-filedisc` at `/filedisc/`; it does not serve the `-preload` build unless its `PS2_FILE_DISC_BUILD` and `PS2_FILE_DISC_MANIFEST` settings are changed together.
+The Japan file-disc preload build is generated at `build/web-kofxi-filedisc-preload`. The ISO and build contain game data and should remain private. To serve this variant at `/filedisc/`, set both `PS2_FILE_DISC_BUILD` and `PS2_FILE_DISC_MANIFEST` in the local service definition to that build and its manifest, then restart `kofxi-web.service`. The private deployment in this working checkout now uses the preload build; request startup preloading with `?filedisc=1&filedisc_preload=1`.
 
-For a phone, use an HTTPS address reachable from that device, such as the private Tailscale Serve URL. Plain HTTP to a LAN IP is not considered a secure browser context on most phones. The browser must support cross-origin isolation, WebAssembly JSPI (`WebAssembly.Suspending`), and WebGPU. Phone compatibility has not yet been verified; check the page's startup capability message before diagnosing game behavior.
+For a phone, use an HTTPS address reachable from that device, such as the private Tailscale Serve URL, followed by `/filedisc/?filedisc=1&filedisc_preload=1`. The service must stay running on the host. Plain HTTP to a LAN IP is not considered a secure browser context on most phones. The browser must support cross-origin isolation, WebAssembly JSPI (`WebAssembly.Suspending`), and WebGPU. Phone compatibility has not yet been verified; check the page's startup capability message before diagnosing game behavior.
 
 Do not publish the ISO or the game-containing build to a public host. For a general static host to serve this experimental mode, configure the headers and ISO range support above, and expose only a private URL.
