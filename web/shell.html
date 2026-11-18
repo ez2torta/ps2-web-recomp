@@ -729,7 +729,7 @@ function pollInput() {
 const rtcConfig = { iceServers: [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }] };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function roomSend(code, to, message) {
-  const r = await fetch('room/' + code + '/' + to, { method: 'POST', body: JSON.stringify(message) });
+  const r = await fetch('/room/' + code + '/' + to, { method: 'POST', body: JSON.stringify(message) });
   if (!r.ok) throw new Error(r.status === 404 ? 'Room ' + code + ' does not exist any more.' : 'The room server answered ' + r.status + '.');
 }
 async function* roomMessages(code, me) {
@@ -737,7 +737,7 @@ async function* roomMessages(code, me) {
   for (;;) {
     let r;
     try {
-      r = await fetch('room/' + code + '/' + me + '?after=' + after, { cache: 'no-store' });
+      r = await fetch('/room/' + code + '/' + me + '?after=' + after, { cache: 'no-store' });
     } catch (e) {
       await sleep(2000);
       continue;
@@ -802,7 +802,7 @@ inviteButton.addEventListener('click', async () => {
   }
   inviteButton.disabled = true;
   try {
-    const r = await fetch('room', { method: 'POST' });
+    const r = await fetch('/room', { method: 'POST' });
     if (!r.ok) throw new Error('This server cannot make rooms. Serve the page with scripts/serve.py.');
     room = (await r.json()).room;
     const sound = audio.createMediaStreamDestination();
