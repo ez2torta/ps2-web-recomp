@@ -50,6 +50,7 @@ void watch_hit(std::uint32_t a, std::uint32_t v, const char *via) {
     std::fprintf(stderr, "[watch] write %08X = %08X (was %08X) via %s, pc 0x%08X ra 0x%08X\n", a, v, was, via, g_cpu.pc, g_cpu.r[31].w[0]);
     if (g_watch_regs_on && !g_watch_regs_printed) {
         g_watch_regs_printed = true;
+        std::fprintf(stderr, "[watch] first-hit regs r2: %08X\n", g_cpu.r[2].w[0]);
         std::fprintf(stderr, "[watch] first-hit regs r4-r10: %08X %08X %08X %08X %08X %08X %08X\n",
                      g_cpu.r[4].w[0], g_cpu.r[5].w[0], g_cpu.r[6].w[0], g_cpu.r[7].w[0],
                      g_cpu.r[8].w[0], g_cpu.r[9].w[0], g_cpu.r[10].w[0]);
