@@ -168,5 +168,8 @@ void set_pad_pressure(int button, std::uint8_t value, int pad = 0);
 void set_pad_connected(int pad, bool connected);
 std::uint16_t pad_rumble(int pad = 0);
 void set_audio_sink(std::function<void(const std::int16_t *samples, std::size_t frames)> sink);
+// Experimental, emulation-thread only: discard host audio output while SPU2
+// continues to advance. Does not remove samples already sent to the host.
+void suppress_audio_output(bool suppressed);
 
 }

@@ -88,6 +88,7 @@ std::uint16_t g_spdif_out = 0, g_spdif_mode = 0, g_spdif_media = 0;
 std::vector<std::int16_t> g_audio;
 bool g_record = false;
 std::function<void(const std::int16_t *, std::size_t)> g_sink;
+bool g_output_suppressed = false;
 std::uint64_t g_next_tick = 0;
 bool g_tick_pending = false;
 
@@ -329,8 +330,10 @@ void tick() {
     if (count && ++ticks % 15000 == 0)
         std::fprintf(stderr, "[spu2] %.1f voices per batch (attack %.1f decay %.1f sustain %.1f release %.1f)\n", static_cast<double>(active) / ticks,
                      static_cast<double>(phases[1]) / ticks, static_cast<double>(phases[2]) / ticks, static_cast<double>(phases[3]) / ticks, static_cast<double>(phases[4]) / ticks);
-    if (g_record) g_audio.insert(g_audio.end(), out, out + kBatch * 2);
-    if (g_sink) g_sink(out, kBatch);
+    if (!g_output_suppressed) {
+        if (g_record) g_audio.insert(g_audio.end(), out, out + kBatch * 2);
+        if (g_sink) g_sink(out, kBatch);
+    }
     feed_input(0);
     feed_input(1);
     g_next_tick += kBatch * kCyclesPerSample;
@@ -584,6 +587,7 @@ void dma(int core, std::uint32_t madr, std::uint32_t words, bool to_spu, int cha
 void stop_dma(int core) { g_cores[core].transfers.clear(); }
 
 void set_sink(std::function<void(const std::int16_t *, std::size_t)> sink) { g_sink = std::move(sink); }
+void suppress_output(bool suppressed) { g_output_suppressed = suppressed; }
 
 void dump_voices() {
     for (int c = 0; c < 2; ++c)

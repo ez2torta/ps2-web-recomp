@@ -21,5 +21,6 @@ void stop_dma(int core);
 void dump_audio(const char *path);
 void dump_voices();
 void set_sink(std::function<void(const std::int16_t *samples, std::size_t frames)> sink);
+void suppress_output(bool suppressed);
 
 }

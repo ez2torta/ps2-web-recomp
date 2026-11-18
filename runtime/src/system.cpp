@@ -701,5 +701,6 @@ void set_pad_pressure(int button, std::uint8_t value, int pad) { iop::sio2::set_
 void set_pad_connected(int pad, bool connected) { iop::sio2::set_connected(pad, connected); }
 std::uint16_t pad_rumble(int pad) { return iop::sio2::rumble(pad); }
 void set_audio_sink(std::function<void(const std::int16_t *, std::size_t)> sink) { iop::spu2::set_sink(std::move(sink)); }
+void suppress_audio_output(bool suppressed) { iop::spu2::suppress_output(suppressed); }
 
 }
