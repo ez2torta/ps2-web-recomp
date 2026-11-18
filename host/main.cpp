@@ -141,12 +141,14 @@ int main(int argc, char **argv) {
         const char *profile = std::getenv("PS2_PROFILE");
         const char *profile_from = std::getenv("PS2_PROFILE_FROM");
         if (profile) start_profile(profile_from ? std::strtoull(profile_from, nullptr, 10) : 0);
-        const int result = ps2::run();
-        if (profile) write_profile(profile);
-        return result;
-#else
-        return ps2::run();
 #endif
+        const int result = ps2::run();
+        if (std::getenv("PS2_VU_COUNT"))
+            std::fprintf(stderr, "[vu1-summary] interpreted calls %llu\n", static_cast<unsigned long long>(ps2::vu1_interpreted_calls()));
+#ifdef PS2_PROFILE
+        if (profile) write_profile(profile);
+#endif
+        return result;
     };
 #ifdef PS2_WINDOW
     if (window) {
