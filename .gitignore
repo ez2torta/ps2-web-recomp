@@ -5,6 +5,15 @@
 *.zip
 *.7z
 *.rar
+*.ISO
+*.elf
+*.ELF
+*.state
+*.state.gz
+*.state.PARTIAL
+*.ps2
+*.irx
+*.IRX
 
 /generated/
 /tools/
@@ -15,3 +24,6 @@
 __pycache__/
 
 /third_party/wgpu-native/
+
+# Local deployment, game captures and generated web packages.
+/deploy/
