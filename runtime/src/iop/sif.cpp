@@ -764,7 +764,15 @@ std::uint32_t set_dma(std::uint32_t transfers, std::uint32_t count) {
         bytes += size;
         if (dst == kRpcRecvAddr) g_data_addr = src;
         else if (dst == 0) reboot(src);
-        else if (dst == kCmdBuffer) command(src, size);
+        else if (dst == kCmdBuffer) {
+            if (g_options.trace_iop_modules && size >= sizeof(Header)) {
+                const auto *h = reinterpret_cast<const Header *>(g_ram + src);
+                if (h->cid == 0x80000004u)
+                    std::fprintf(stderr, "[sif] system-command DMA from EE 0x%08X size 0x%X at PC 0x%08X RA 0x%08X\n",
+                                 src, size, g_cpu.pc, g_cpu.r[31].w[0]);
+            }
+            command(src, size);
+        }
         else {
             // SIF DMA moves whole quadwords, so a size that is not a multiple of 16 still
             // carries the rest of its last quadword. Sound drivers keep a ready flag there.
