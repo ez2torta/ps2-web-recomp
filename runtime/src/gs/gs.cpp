@@ -497,6 +497,7 @@ struct Batch {
 
 std::FILE *g_log = nullptr;
 std::FILE *g_transfer_file = nullptr;
+std::FILE *g_vertex_log = nullptr;
 std::uint64_t g_transfer_number = 0;
 std::string g_dir;
 std::uint64_t g_from = 0, g_frames = 1, g_draws = 0, g_images = 0;
@@ -535,6 +536,11 @@ bool active() {
             return false;
         }
         std::fprintf(g_log, "draw\tprims\tfirst\tctx\tprim\tframe\tzbuf\ttex0\ttex1\tclamp\talpha\ttest\txyoffset\tscissor\tbox\traw_xy\ttexels\n");
+        if (std::getenv("PS2_CAPTURE_VERTICES")) {
+            g_vertex_log = std::fopen((g_dir + "/vertices.tsv").c_str(), "w");
+            if (g_vertex_log)
+                std::fprintf(g_vertex_log, "batch\tprimitive\tframe\tprim\tctx\tscissor\tvertex\tx\ty\tz\tpx\tpy\tu\tv\ts\tt\tq\n");
+        }
     }
     return true;
 }
@@ -664,9 +670,21 @@ void prim(const State &s, int needed) {
     ++b.count;
     const float ox = static_cast<float>(x.xyoffset & 0xFFFFu) / 16.0f, oy = static_cast<float>((x.xyoffset >> 32) & 0xFFFFu) / 16.0f;
     const float tw = static_cast<float>(1u << ((x.tex0 >> 26) & 15u)), th = static_cast<float>(1u << ((x.tex0 >> 30) & 15u));
+    const float scissor_x0 = static_cast<float>(x.scissor & 0x7FFu), scissor_x1 = static_cast<float>((x.scissor >> 16) & 0x7FFu);
+    const float scissor_y0 = static_cast<float>((x.scissor >> 32) & 0x7FFu), scissor_y1 = static_cast<float>((x.scissor >> 48) & 0x7FFu);
+    static const float vertex_margin = [] {
+        const char *value = std::getenv("PS2_CAPTURE_VERTEX_MARGIN");
+        return value ? std::max(0.0f, std::strtof(value, nullptr)) : 512.0f;
+    }();
+    bool extreme = false;
+    float pxs[3]{}, pys[3]{};
     for (int i = 0; i < needed; ++i) {
         const Vertex &v = s.queue[i];
         const float px = static_cast<float>(v.x) / 16.0f - ox, py = static_cast<float>(v.y) / 16.0f - oy;
+        pxs[i] = px;
+        pys[i] = py;
+        extreme |= px < scissor_x0 - vertex_margin || px > scissor_x1 + vertex_margin ||
+                   py < scissor_y0 - vertex_margin || py > scissor_y1 + vertex_margin;
         b.x0 = std::min(b.x0, px);
         b.y0 = std::min(b.y0, py);
         b.x1 = std::max(b.x1, px);
@@ -686,6 +704,15 @@ void prim(const State &s, int needed) {
         b.u1 = std::max(b.u1, u);
         b.v1 = std::max(b.v1, w);
         g_target_rows = std::max(g_target_rows, static_cast<int>(py) + 1);
+    }
+    if (g_vertex_log && extreme) {
+        for (int i = 0; i < needed; ++i) {
+            const Vertex &v = s.queue[i];
+            std::fprintf(g_vertex_log, "%llu\t%llu\t%016llX\t%03llX\t%d\t%016llX\t%d\t%u\t%u\t%u\t%.2f\t%.2f\t%u\t%u\t%.8g\t%.8g\t%.8g\n",
+                         static_cast<unsigned long long>(g_draws), static_cast<unsigned long long>(b.count - 1),
+                         static_cast<unsigned long long>(x.frame), static_cast<unsigned long long>(prim & 0x7FFu), c,
+                         static_cast<unsigned long long>(x.scissor), i, v.x, v.y, v.z, pxs[i], pys[i], v.u, v.v, v.s, v.t, v.q);
+        }
     }
 }
 
@@ -720,6 +747,7 @@ void vblank() {
     } else if (was) {
         flush();
         if (g_transfer_file) { std::fclose(g_transfer_file); g_transfer_file = nullptr; }
+        if (g_vertex_log) { std::fclose(g_vertex_log); g_vertex_log = nullptr; }
         if (g_target != ~0ull) dump_target(g_target, g_target_rows, "end of capture");
         std::fclose(g_log);
         g_log = nullptr;
