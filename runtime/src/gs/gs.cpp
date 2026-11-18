@@ -488,10 +488,11 @@ namespace capture {
 
 struct Batch {
     bool open = false;
-    std::uint64_t prim = 0, frame = 0, zbuf = 0, tex0 = 0, tex1 = 0, clamp = 0, alpha = 0, test = 0;
+    std::uint64_t prim = 0, frame = 0, zbuf = 0, tex0 = 0, tex1 = 0, clamp = 0, alpha = 0, test = 0, xyoffset = 0, scissor = 0;
     int ctx = 0;
     std::uint64_t first = 0, count = 0;
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0, u0 = 0, v0 = 0, u1 = 0, v1 = 0;
+    std::uint32_t raw_x0 = 0, raw_y0 = 0, raw_x1 = 0, raw_y1 = 0;
 };
 
 std::FILE *g_log = nullptr;
@@ -533,7 +534,7 @@ bool active() {
             g_done = true;
             return false;
         }
-        std::fprintf(g_log, "draw\tprims\tfirst\tctx\tprim\tframe\tzbuf\ttex0\ttex1\tclamp\talpha\ttest\tbox\ttexels\n");
+        std::fprintf(g_log, "draw\tprims\tfirst\tctx\tprim\tframe\tzbuf\ttex0\ttex1\tclamp\talpha\ttest\txyoffset\tscissor\tbox\traw_xy\ttexels\n");
     }
     return true;
 }
@@ -612,11 +613,12 @@ void flush() {
     Batch &b = g_batch;
     if (!b.open) return;
     b.open = false;
-    std::fprintf(g_log, "%llu\t%llu\t%llu\t%d\t%03llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%.1f,%.1f-%.1f,%.1f\t%.1f,%.1f-%.1f,%.1f\n",
+    std::fprintf(g_log, "%llu\t%llu\t%llu\t%d\t%03llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%.1f,%.1f-%.1f,%.1f\t%u,%u-%u,%u\t%.1f,%.1f-%.1f,%.1f\n",
                  static_cast<unsigned long long>(g_draws++), static_cast<unsigned long long>(b.count), static_cast<unsigned long long>(b.first), b.ctx,
                  static_cast<unsigned long long>(b.prim & 0x7FFu), static_cast<unsigned long long>(b.frame), static_cast<unsigned long long>(b.zbuf),
                  static_cast<unsigned long long>(b.tex0), static_cast<unsigned long long>(b.tex1), static_cast<unsigned long long>(b.clamp),
-                 static_cast<unsigned long long>(b.alpha), static_cast<unsigned long long>(b.test), b.x0, b.y0, b.x1, b.y1, b.u0, b.v0, b.u1, b.v1);
+                 static_cast<unsigned long long>(b.alpha), static_cast<unsigned long long>(b.test), static_cast<unsigned long long>(b.xyoffset),
+                 static_cast<unsigned long long>(b.scissor), b.x0, b.y0, b.x1, b.y1, b.raw_x0, b.raw_y0, b.raw_x1, b.raw_y1, b.u0, b.v0, b.u1, b.v1);
     if (g_every) dump_target(b.frame, g_target_rows, "after draw");
 }
 
@@ -636,7 +638,7 @@ void prim(const State &s, int needed) {
     Batch &b = g_batch;
     switch_target(x.frame);
     if (!b.open || b.prim != (prim & 0x7FFu) || b.ctx != c || b.frame != x.frame || b.zbuf != x.zbuf || b.tex0 != x.tex0 || b.tex1 != x.tex1 ||
-        b.clamp != x.clamp || b.alpha != x.alpha || b.test != x.test) {
+        b.clamp != x.clamp || b.alpha != x.alpha || b.test != x.test || b.xyoffset != x.xyoffset || b.scissor != x.scissor) {
         flush();
         b = Batch{};
         b.open = true;
@@ -649,9 +651,13 @@ void prim(const State &s, int needed) {
         b.clamp = x.clamp;
         b.alpha = x.alpha;
         b.test = x.test;
+        b.xyoffset = x.xyoffset;
+        b.scissor = x.scissor;
         b.first = g_primitives;
         b.x0 = b.y0 = b.u0 = b.v0 = 1e30f;
         b.x1 = b.y1 = b.u1 = b.v1 = -1e30f;
+        b.raw_x0 = b.raw_y0 = 0xFFFFFFFFu;
+        b.raw_x1 = b.raw_y1 = 0;
         static const bool textures = std::getenv("PS2_CAPTURE_TEXTURES") != nullptr;
         if (textures && (prim & 0x10u)) dump_texture(s, x.tex0);
     }
@@ -665,6 +671,10 @@ void prim(const State &s, int needed) {
         b.y0 = std::min(b.y0, py);
         b.x1 = std::max(b.x1, px);
         b.y1 = std::max(b.y1, py);
+        b.raw_x0 = std::min(b.raw_x0, v.x);
+        b.raw_y0 = std::min(b.raw_y0, v.y);
+        b.raw_x1 = std::max(b.raw_x1, v.x);
+        b.raw_y1 = std::max(b.raw_y1, v.y);
         float u = static_cast<float>(v.u) / 16.0f, w = static_cast<float>(v.v) / 16.0f;
         if (!(prim & 0x100u)) {
             const float q = v.q == 0.0f ? 1.0f : v.q;
