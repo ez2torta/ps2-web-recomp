@@ -140,12 +140,16 @@
   <select id="pad" aria-label="Player 1 gamepad" title="Gamepad for player 1, the next connected one is player 2 (press a button on a pad if it is missing)">
     <option value="">Pad: auto</option>
   </select>
-  <details id="keyboard-settings"><summary>Keyboard controls</summary>
+  <details id="keyboard-settings"><summary>Configure controls</summary>
     <label>Player <select id="keyboard-player"><option value="0">1</option><option value="1">2 (local)</option></select></label>
     <label>Button <select id="keyboard-button"></select></label>
     <button id="keyboard-assign" type="button">Assign key</button>
     <button id="keyboard-reset" type="button">Reset player</button>
     <span id="keyboard-status" aria-live="polite"></span>
+    <button id="gamepad-assign" type="button">Assign gamepad button</button>
+    <button id="gamepad-reset" type="button">Reset gamepad</button>
+    <button id="gamepad-cancel" type="button">Cancel assignment</button>
+    <span id="gamepad-status" aria-live="polite"></span>
   </details>
   <button id="save-state" class="host-only" type="button" disabled title="Save the game to this device">Save state</button>
   <button id="load-state" class="host-only" type="button" disabled title="Load the quick save from this device">Load state</button>
@@ -664,13 +668,13 @@ function showKeyboardBinding(message) {
   keyboardStatus.textContent = message || (key ? keyNames[bit] + ': ' + key : keyNames[bit] + ': unassigned');
 }
 function saveKeyboardBindings() { try { localStorage.setItem('ps2web-keymaps-v1', JSON.stringify(keyMaps)); } catch (_) {} }
-keyboardPlayer.addEventListener('change', () => { configuringKey = false; showKeyboardBinding(); });
-keyboardButton.addEventListener('change', () => { configuringKey = false; showKeyboardBinding(); });
-keyboardAssign.addEventListener('click', () => { keys.clear(); configuringKey = true; showKeyboardBinding('Press a key (Escape cancels)'); });
+keyboardPlayer.addEventListener('change', () => { configuringKey = false; cancelPadCapture(); showKeyboardBinding(); showPadBinding(); });
+keyboardButton.addEventListener('change', () => { configuringKey = false; cancelPadCapture(); showKeyboardBinding(); showPadBinding(); });
+keyboardAssign.addEventListener('click', () => { cancelPadCapture(); keys.clear(); configuringKey = true; showKeyboardBinding('Press a key (Escape cancels)'); });
 document.getElementById('keyboard-reset').addEventListener('click', () => {
   const player = Number(keyboardPlayer.value), reset = player === 0 ? {...defaultKeyMap} : {};
   if (Object.keys(reset).some(code => code in keyMaps[1 - player])) { showKeyboardBinding('A default key is assigned to the other player'); return; }
-  keyMaps[player] = reset; configuringKey = false; keys.clear(); saveKeyboardBindings(); showKeyboardBinding();
+  keyMaps[player] = reset; configuringKey = false; cancelPadCapture(); keys.clear(); saveKeyboardBindings(); showKeyboardBinding();
 });
 showKeyboardBinding();
 const stickKeys = new Set(['KeyI', 'KeyJ', 'KeyK', 'KeyL']);
@@ -690,8 +694,39 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => { keys.delete(e.code); });
 window.addEventListener('blur', () => keys.clear());
-const padButtons = [[0, 14], [1, 13], [2, 15], [3, 12], [4, 10], [5, 11], [6, 8], [7, 9], [8, 0], [9, 3], [10, 1], [11, 2],
-                    [12, 4], [13, 6], [14, 7], [15, 5]];
+const defaultPadButtons = [[0, 14], [1, 13], [2, 15], [3, 12], [4, 10], [5, 11], [6, 8], [7, 9], [8, 0], [9, 3], [10, 1], [11, 2],
+                           [12, 4], [13, 6], [14, 7], [15, 5]];
+let padMaps = [defaultPadButtons.map(pair => [...pair]), defaultPadButtons.map(pair => [...pair])];
+try {
+  const saved = JSON.parse(localStorage.getItem('ps2web-padmapping-v1'));
+  if (Array.isArray(saved) && saved.length === 2 && saved.every(map => Array.isArray(map) &&
+      map.every(pair => Array.isArray(pair) && pair.length === 2 && Number.isInteger(pair[0]) && pair[0] >= 0 && pair[0] < 64 &&
+                        Number.isInteger(pair[1]) && pair[1] >= 0 && pair[1] < 16) &&
+      new Set(map.map(pair => pair[0])).size === map.length && new Set(map.map(pair => pair[1])).size === map.length)) padMaps = saved;
+} catch (_) {}
+let padCapture = null, blockedPad = null;
+const padStatus = document.getElementById('gamepad-status');
+function savePadBindings() { try { localStorage.setItem('ps2web-padmapping-v1', JSON.stringify(padMaps)); } catch (_) {} }
+function showPadBinding(message) {
+  const bit = Number(keyboardButton.value), pair = padMaps[Number(keyboardPlayer.value)].find(item => item[1] === bit);
+  padStatus.textContent = message || (pair ? keyNames[bit] + ': gamepad button ' + pair[0] : keyNames[bit] + ': unassigned');
+}
+function cancelPadCapture() { padCapture = null; }
+function pressedButton(button) { return !!button && (button.pressed || button.value > 0.05); }
+document.getElementById('gamepad-assign').addEventListener('click', () => {
+  const player = Number(keyboardPlayer.value), pad = orderedPads()[player];
+  if (!pad) { showPadBinding('Connect the selected player’s gamepad and start the game'); return; }
+  configuringKey = false;
+  padCapture = {player, bit: Number(keyboardButton.value), pad: pad.index,
+                previous: new Set(pad.buttons.map((button, index) => pressedButton(button) ? index : -1).filter(index => index >= 0))};
+  showPadBinding('Release buttons, then press the desired gamepad button');
+});
+document.getElementById('gamepad-cancel').addEventListener('click', () => { cancelPadCapture(); showPadBinding('Cancelled'); });
+document.getElementById('gamepad-reset').addEventListener('click', () => {
+  cancelPadCapture(); padMaps[Number(keyboardPlayer.value)] = defaultPadButtons.map(pair => [...pair]);
+  savePadBindings(); showPadBinding();
+});
+showPadBinding();
 const axis = (v) => Math.max(0, Math.min(255, Math.round((v + 1) * 127.5)));
 // the keyboard and touch controls are player 1 along with the first gamepad, a second gamepad is player 2
 const players = [0, 1].map(() => ({ plugged: false, pad: -1, pressure: '', strong: 0, weak: 0, rumbleAt: 0 }));
@@ -719,10 +754,28 @@ function pollPlayer(port, gamepad, own) {
   }
   for (const k of keys) if (k in keyMaps[port]) buttons |= 1 << keyMaps[port][k];
   const full = buttons;
+  let suppressPad = false;
+  if (padCapture && padCapture.player === port) {
+    suppressPad = true;
+    if (gamepad && gamepad.index === padCapture.pad) {
+      const pressed = new Set(gamepad.buttons.map((button, index) => pressedButton(button) ? index : -1).filter(index => index >= 0));
+      const chosen = [...pressed].find(index => index < 64 && !padCapture.previous.has(index));
+      padCapture.previous = pressed;
+      if (chosen !== undefined) {
+        const bit = padCapture.bit;
+        padMaps[port] = padMaps[port].filter(pair => pair[0] !== chosen && pair[1] !== bit);
+        padMaps[port].push([chosen, bit]);
+        blockedPad = {port, pad: gamepad.index, index: chosen};
+        cancelPadCapture(); savePadBindings(); showPadBinding();
+      }
+    } else showPadBinding('Selected gamepad disconnected; reconnect or cancel');
+  }
+  if (blockedPad && blockedPad.port === port && (!gamepad || gamepad.index !== blockedPad.pad || !pressedButton(gamepad.buttons[blockedPad.index]))) blockedPad = null;
   if (gamepad) {
-    for (const [index, bit] of padButtons) {
+    for (const [index, bit] of padMaps[port]) {
+      if (suppressPad || (blockedPad && blockedPad.port === port && blockedPad.pad === gamepad.index && blockedPad.index === index)) continue;
       const b = gamepad.buttons[index];
-      if (!b || !(b.pressed || b.value > 0.05)) continue;
+      if (!pressedButton(b)) continue;
       buttons |= 1 << bit;
       if (!(full & (1 << bit))) pressure[bit] = Math.max(1, Math.round((b.value > 0 ? b.value : 1) * 255));
     }
