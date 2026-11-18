@@ -95,6 +95,9 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args);
 int run();
 void halt(const std::string &reason);
 bool save_state(const std::string &path);
+// Invoke at a safe point on the emulation thread, as with file-based states.
+// On failure, the output buffer is left unchanged.
+bool save_state(std::vector<std::uint8_t> &data);
 bool load_state(const std::string &path);
 bool load_state(const std::uint8_t *data, std::size_t size);
 bool halted();

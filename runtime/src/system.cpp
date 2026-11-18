@@ -326,14 +326,26 @@ void machine_state(state::Stream &s) {
 
 }
 
-bool save_state(const std::string &path) {
+bool save_state(std::vector<std::uint8_t> &data) {
     try {
         state::Writer w;
         machine_state(w);
+        data = std::move(w.out);
+        return true;
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "[state] cannot save: %s\n", e.what());
+        return false;
+    }
+}
+
+bool save_state(const std::string &path) {
+    try {
+        std::vector<std::uint8_t> data;
+        if (!save_state(data)) return false;
         std::ofstream out(path, std::ios::binary);
-        out.write(reinterpret_cast<const char *>(w.out.data()), static_cast<std::streamsize>(w.out.size()));
+        out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
         if (!out) throw std::runtime_error("cannot write " + path);
-        std::fprintf(stderr, "[state] saved frame %llu to %s (%zu KB)\n", static_cast<unsigned long long>(g_frames), path.c_str(), w.out.size() >> 10);
+        std::fprintf(stderr, "[state] saved frame %llu to %s (%zu KB)\n", static_cast<unsigned long long>(g_frames), path.c_str(), data.size() >> 10);
         return true;
     } catch (const std::exception &e) {
         std::fprintf(stderr, "[state] cannot save: %s\n", e.what());
