@@ -61,6 +61,7 @@ bool g_state_request = false;
 bool g_resumed = false;
 std::uint64_t g_step_target = 0;
 bool g_step_reached = false;
+bool g_step_suppress_host_vblank = false;
 std::atomic<int> g_state_operation{0};
 std::mutex g_state_mutex;
 std::string g_state_path;
@@ -169,7 +170,7 @@ void vblank() {
     time_frames();
     apply_presses();
     apply_patches(false);
-    if (g_options.on_vblank) g_options.on_vblank();
+    if (g_options.on_vblank && !g_step_suppress_host_vblank) g_options.on_vblank();
     iop::sio2::flush_cards();
     if (g_options.trace_iop_modules && g_frames % 25 == 0) std::fprintf(stderr, "[frame] %llu prims %llu\n", static_cast<unsigned long long>(g_frames), static_cast<unsigned long long>(gs::primitives_drawn()));
     if (!g_options.frames_dir.empty() && g_options.frame_every && g_frames % g_options.frame_every == 0) dump_frame();
@@ -489,16 +490,25 @@ void run_loop() {
 }
 
 bool run_frames(std::uint64_t count) {
+    return run_frames(count, false);
+}
+
+bool run_frames(std::uint64_t count, bool suppress_host_vblank) {
     if (!count || g_halted || g_step_target || count > UINT64_MAX - g_frames) return false;
     if (!g_resumed) set_budget(g_cpu, kMaxSlice);
     g_resumed = true;
     g_step_target = g_frames + count;
     g_step_reached = false;
+    g_step_suppress_host_vblank = suppress_host_vblank;
+    struct StepCleanup {
+        ~StepCleanup() {
+            g_step_target = 0;
+            g_step_reached = false;
+            g_step_suppress_host_vblank = false;
+        }
+    } cleanup;
     run_loop();
-    const bool reached = !g_halted && g_step_reached && g_frames == g_step_target;
-    g_step_target = 0;
-    g_step_reached = false;
-    return reached;
+    return !g_halted && g_step_reached && g_frames == g_step_target;
 }
 
 int run() {

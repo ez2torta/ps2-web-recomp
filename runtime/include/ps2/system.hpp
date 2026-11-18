@@ -99,6 +99,10 @@ int run();
 // This is not a speculative transaction: memory card writes, audio callbacks,
 // and other host effects can occur. Save states do not contain card contents.
 bool run_frames(std::uint64_t count);
+// Also skip the host VBlank callback while stepping. The caller must handle
+// any input, pacing and other host work normally performed by that callback.
+// This does not suppress audio, card writes, frame dumps or other host effects.
+bool run_frames(std::uint64_t count, bool suppress_host_vblank);
 // Experimental card isolation primitives. Use only on the emulation thread.
 // These do not suppress audio or other host effects, and are not save states.
 struct CardSnapshot {

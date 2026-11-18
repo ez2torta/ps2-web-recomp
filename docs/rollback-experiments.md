@@ -7,3 +7,17 @@ For an experiment that needs to undo card changes, `capture_card` copies the cur
 `suppress_audio_output(true)` suppresses new host audio callbacks and diagnostic recording while SPU2 continues to run; the caller must later disable suppression. While suppressed, `begin_audio_capture(max_frames)` optionally collects a bounded stereo buffer; `finish_audio_capture` returns it only if the capture fit, and `discard_audio_capture` drops it. Disabling suppression also discards an unfinished capture. All calls are restricted to the emulation thread. The caller must decide when and how to play confirmed audio; this API does not enqueue it, retract samples already queued to the host, or prevent timing artifacts.
 
 These APIs do not isolate presentation, game callbacks, disk reads or other external effects. They do not confirm that a speculative state is correct or make snapshots compatible across versions. Do not use them for real online rollback until those effects, concurrent access and failure handling have been designed and tested. The optional native `card_snapshot_test` uses a synthetic temporary card and SIO2 command packets to exercise capture, card writes and reads, deferral, discard and confirmation; it does not run a game or cover all card commands.
+# Host VBlank callback during replay
+
+The experimental `run_frames(count, true)` skips the host VBlank callback while
+continuing the emulated frame and GS work. The existing one-argument form keeps
+its original behavior. A native KOF XI probe replayed ten frames from a saved
+state: the normal pass called the callback ten times, the suppressed pass zero
+times, and both serialized states matched; a subsequent normal frame called it
+again. This used software rendering and a single thread, not the browser.
+
+The callback may also handle pacing, input, or other host work, so callers must
+account for those effects. This flag alone does not isolate audio, card writes,
+frame dumps, or all presentation paths. WebGPU and the browser's actual frame
+queue have not been validated with speculative replay.
+
