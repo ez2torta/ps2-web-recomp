@@ -539,7 +539,7 @@ bool active() {
         if (std::getenv("PS2_CAPTURE_VERTICES")) {
             g_vertex_log = std::fopen((g_dir + "/vertices.tsv").c_str(), "w");
             if (g_vertex_log)
-                std::fprintf(g_vertex_log, "batch\tprimitive\tframe\tprim\tctx\tscissor\tvertex\tx\ty\tz\tpx\tpy\tu\tv\ts\tt\tq\n");
+                std::fprintf(g_vertex_log, "batch\tprimitive\tframe\tprim\tctx\tscissor\txyoffset\tvertex\tx\ty\tz\tpx\tpy\tu\tv\ts\tt\tq\n");
         }
     }
     return true;
@@ -708,10 +708,11 @@ void prim(const State &s, int needed) {
     if (g_vertex_log && extreme) {
         for (int i = 0; i < needed; ++i) {
             const Vertex &v = s.queue[i];
-            std::fprintf(g_vertex_log, "%llu\t%llu\t%016llX\t%03llX\t%d\t%016llX\t%d\t%u\t%u\t%u\t%.2f\t%.2f\t%u\t%u\t%.8g\t%.8g\t%.8g\n",
+            std::fprintf(g_vertex_log, "%llu\t%llu\t%016llX\t%03llX\t%d\t%016llX\t%016llX\t%d\t%u\t%u\t%u\t%.5f\t%.5f\t%u\t%u\t%.8g\t%.8g\t%.8g\n",
                          static_cast<unsigned long long>(g_draws), static_cast<unsigned long long>(b.count - 1),
                          static_cast<unsigned long long>(x.frame), static_cast<unsigned long long>(prim & 0x7FFu), c,
-                         static_cast<unsigned long long>(x.scissor), i, v.x, v.y, v.z, pxs[i], pys[i], v.u, v.v, v.s, v.t, v.q);
+                         static_cast<unsigned long long>(x.scissor), static_cast<unsigned long long>(x.xyoffset), i, v.x, v.y, v.z,
+                         pxs[i], pys[i], v.u, v.v, v.s, v.t, v.q);
         }
     }
 }
