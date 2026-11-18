@@ -95,11 +95,14 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args);
 int run();
 // Experimental: advance from a safe point on the emulation thread and pause
 // without halting. Returns false if execution halts before the target frame.
+// This is not a speculative transaction: memory card writes, audio callbacks,
+// and other host effects can occur. Save states do not contain card contents.
 bool run_frames(std::uint64_t count);
 void halt(const std::string &reason);
 bool save_state(const std::string &path);
 // Invoke at a safe point on the emulation thread, as with file-based states.
-// On failure, the output buffer is left unchanged.
+// On failure, the output buffer is left unchanged. Like file-based states,
+// this does not include the contents of the emulated memory card.
 bool save_state(std::vector<std::uint8_t> &data);
 bool load_state(const std::string &path);
 bool load_state(const std::uint8_t *data, std::size_t size);
