@@ -459,7 +459,9 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args) {
 
 void run_loop() {
     Cpu &c = g_cpu;
-    while (!g_halted && !g_step_reached) {
+    // VBlank can queue a save and hit the frame limit inside EE dispatch.
+    // Give that pending save one final pass after the machine halts.
+    while ((!g_halted && !g_step_reached) || g_state_request) {
         if (const int operation = g_state_operation.load(std::memory_order_acquire)) {
             // Request fields stay immutable until completion; never serialize
             // from the browser thread while the emulated CPUs are running.
@@ -476,6 +478,7 @@ void run_loop() {
             g_state_request = false;
             save_state(g_options.save_state_path);
         }
+        if (g_halted || g_step_reached) break;
         c.pc &= ~kUnwind;
         run_due_events();
         kernel::service(c);
