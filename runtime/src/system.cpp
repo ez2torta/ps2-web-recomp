@@ -59,6 +59,8 @@ std::uint64_t g_frames = 0;
 std::uint64_t g_iop_synced = 0;
 bool g_state_request = false;
 bool g_resumed = false;
+std::uint64_t g_step_target = 0;
+bool g_step_reached = false;
 std::atomic<int> g_state_operation{0};
 std::mutex g_state_mutex;
 std::string g_state_path;
@@ -178,6 +180,7 @@ void vblank() {
     if (g_options.max_frames && g_frames >= g_options.max_frames) halt("frame limit reached");
     if (g_options.save_state_frame && g_frames == g_options.save_state_frame) g_state_request = true;
     schedule(hw::kEventVblank, now() + frame_cycles(), vblank);
+    if (g_step_target && g_frames >= g_step_target) g_step_reached = true;
 }
 
 void idle(Cpu &c) {
@@ -241,7 +244,7 @@ std::uint64_t scheduled_at(int event) {
 bool preempt(Cpu &c) {
     run_due_events();
     refill(c);
-    return g_halted || g_state_request || g_state_operation.load(std::memory_order_relaxed) || kernel::must_unwind();
+    return g_halted || g_step_reached || g_state_request || g_state_operation.load(std::memory_order_relaxed) || kernel::must_unwind();
 }
 
 void halt(const std::string &reason) {
@@ -453,10 +456,9 @@ void boot(std::uint32_t entry, const std::vector<std::string> &args) {
     schedule(hw::kEventVblank, frame_cycles(), vblank);
 }
 
-int run() {
+void run_loop() {
     Cpu &c = g_cpu;
-    if (!g_resumed) set_budget(c, kMaxSlice);
-    while (!g_halted) {
+    while (!g_halted && !g_step_reached) {
         if (const int operation = g_state_operation.load(std::memory_order_acquire)) {
             // Request fields stay immutable until completion; never serialize
             // from the browser thread while the emulated CPUs are running.
@@ -476,7 +478,7 @@ int run() {
         c.pc &= ~kUnwind;
         run_due_events();
         kernel::service(c);
-        if (g_halted) break;
+        if (g_halted || g_step_reached) break;
         if (c.pc == kIdle) {
             idle(c);
             continue;
@@ -484,6 +486,24 @@ int run() {
         if (c.budget <= 0) refill(c);
         dispatch(c, 0, 0);
     }
+}
+
+bool run_frames(std::uint64_t count) {
+    if (!count || g_halted || g_step_target || count > UINT64_MAX - g_frames) return false;
+    if (!g_resumed) set_budget(g_cpu, kMaxSlice);
+    g_resumed = true;
+    g_step_target = g_frames + count;
+    g_step_reached = false;
+    run_loop();
+    const bool reached = !g_halted && g_step_reached && g_frames == g_step_target;
+    g_step_target = 0;
+    g_step_reached = false;
+    return reached;
+}
+
+int run() {
+    if (!g_resumed) set_budget(g_cpu, kMaxSlice);
+    run_loop();
     kernel::dump();
     iop::dump();
     sif::dump();

@@ -93,6 +93,9 @@ void sync_iop();
 bool load_elf(const std::string &path, std::uint32_t &entry);
 void boot(std::uint32_t entry, const std::vector<std::string> &args);
 int run();
+// Experimental: advance from a safe point on the emulation thread and pause
+// without halting. Returns false if execution halts before the target frame.
+bool run_frames(std::uint64_t count);
 void halt(const std::string &reason);
 bool save_state(const std::string &path);
 // Invoke at a safe point on the emulation thread, as with file-based states.
