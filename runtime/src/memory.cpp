@@ -26,6 +26,8 @@ enum class Region { Ram, Scratchpad, Io, Vu, Rom, None };
 // that range of main memory print itself, guest store or bulk copy, with the
 // cpu state at the time.
 bool g_watch_on = false;
+bool g_watch_regs_on = false;
+bool g_watch_regs_printed = false;
 std::uint32_t g_watch_base = 0, g_watch_end = 0;
 
 void init_watch() {
@@ -38,6 +40,7 @@ void init_watch() {
             std::fprintf(stderr, "[watch] writes to 0x%08X..0x%08X will print\n", g_watch_base, g_watch_end);
         }
     }
+    g_watch_regs_on = std::getenv("PS2_WATCH_REGS") != nullptr;
 }
 
 void watch_hit(std::uint32_t a, std::uint32_t v, const char *via) {
@@ -45,6 +48,12 @@ void watch_hit(std::uint32_t a, std::uint32_t v, const char *via) {
     std::uint32_t was = 0;
     if (at) std::memcpy(&was, at, 4);
     std::fprintf(stderr, "[watch] write %08X = %08X (was %08X) via %s, pc 0x%08X ra 0x%08X\n", a, v, was, via, g_cpu.pc, g_cpu.r[31].w[0]);
+    if (g_watch_regs_on && !g_watch_regs_printed) {
+        g_watch_regs_printed = true;
+        std::fprintf(stderr, "[watch] first-hit regs r4-r10: %08X %08X %08X %08X %08X %08X %08X\n",
+                     g_cpu.r[4].w[0], g_cpu.r[5].w[0], g_cpu.r[6].w[0], g_cpu.r[7].w[0],
+                     g_cpu.r[8].w[0], g_cpu.r[9].w[0], g_cpu.r[10].w[0]);
+    }
 }
 
 void watch_span(std::uint32_t a, std::uint32_t n, const char *via) {
