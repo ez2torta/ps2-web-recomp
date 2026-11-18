@@ -17,7 +17,11 @@ fi
 mkdir -p "$out"
 printf '%s\n' "$boot" > "$out/boot.txt"
 source "$emsdk/emsdk_env.sh" > /dev/null 2>&1
-emcmake cmake -S "$here" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+cmake_args=(-S "$here" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release)
+if [ -n "${PS2_WEB_CXX_FLAGS:-}" ]; then
+    cmake_args+=("-DCMAKE_CXX_FLAGS_RELEASE=$PS2_WEB_CXX_FLAGS")
+fi
+emcmake cmake "${cmake_args[@]}" \
     -DPS2_GENERATED="$here/generated/$game" -DPS2_WEB_ELF="$elf" -DPS2_WEB_BOOT_FILE="$out/boot.txt" \
     -DPS2_WEB_PATCHES="$([ -f "$here/games/$game/patches.txt" ] && echo "$here/games/$game/patches.txt")"
 ps2_ninja -C "$out" ps2web
