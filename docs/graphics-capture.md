@@ -11,3 +11,5 @@ PS2_GS=software PS2_ONE_THREAD=1 \
 ```
 
 Use a frame and paths appropriate to the game. Captures may contain game data: keep them local. `PS2_CAPTURE_RAW` has no effect without texture capture and does not enable it by itself. Comparing captures from different frames can reveal differences, but does not establish which one is incorrect.
+
+With `PS2_CAPTURE_TRANSFERS=1`, the software renderer also records the incoming bytes of each host-to-local transfer started during the selected capture. `draws.tsv` associates each `.gs-transfer` file with its preceding transfer registers. These are the input chunks received by the transfer path, including any packet padding, and can be incomplete when a transfer crosses the capture boundary. They do not identify the source in EE memory. The output can be large and contains game data; use only for local diagnostics.

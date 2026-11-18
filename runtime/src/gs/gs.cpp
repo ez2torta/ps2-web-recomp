@@ -29,6 +29,7 @@ State g_state;
 std::uint32_t g_setup_generation = 0;
 
 void serve_state(const void *payload);
+namespace capture { void image(const std::uint8_t *data, std::size_t size); }
 
 namespace {
 
@@ -254,6 +255,7 @@ void feed_image(const std::uint8_t *data, std::size_t bytes) {
 #endif
     if (!cpu_raster()) return;
     if (!g_transfer.active || (g_state.trxdir & 3u) != 0) return;
+    capture::image(data, bytes);
     const std::uint32_t psm = static_cast<std::uint32_t>(g_state.bitbltbuf >> 56) & 0x3Fu;
     const std::uint32_t bits = bits_per_pixel(psm);
     if (bits == 24) {
@@ -493,6 +495,8 @@ struct Batch {
 };
 
 std::FILE *g_log = nullptr;
+std::FILE *g_transfer_file = nullptr;
+std::uint64_t g_transfer_number = 0;
 std::string g_dir;
 std::uint64_t g_from = 0, g_frames = 1, g_draws = 0, g_images = 0;
 bool g_every = false, g_done = false;
@@ -678,12 +682,23 @@ void prim(const State &s, int needed) {
 void transfer(const State &s, std::uint64_t dir) {
     if (!active()) return;
     flush();
+    if (g_transfer_file) { std::fclose(g_transfer_file); g_transfer_file = nullptr; }
     std::fprintf(g_log, "transfer\tdir %llu\tbitbltbuf %016llX\ttrxpos %016llX\ttrxreg %016llX\n", static_cast<unsigned long long>(dir & 3u),
                  static_cast<unsigned long long>(s.bitbltbuf), static_cast<unsigned long long>(s.trxpos), static_cast<unsigned long long>(s.trxreg));
+    if ((dir & 3u) == 0 && cpu_raster() && std::getenv("PS2_CAPTURE_TRANSFERS")) {
+        char name[64];
+        std::snprintf(name, sizeof name, "transfer_%06llu.gs-transfer", static_cast<unsigned long long>(g_transfer_number++));
+        g_transfer_file = std::fopen((g_dir + "/" + name).c_str(), "wb");
+        if (g_transfer_file) std::fprintf(g_log, "transfer-data\t%s\n", name);
+    }
     if ((dir & 3u) == 2u && g_target != ~0ull) {
         dump_target(g_target, g_target_rows, "before a local copy");
         g_target = ~0ull;
     }
+}
+
+void image(const std::uint8_t *data, std::size_t size) {
+    if (g_transfer_file) std::fwrite(data, 1, size, g_transfer_file);
 }
 
 void vblank() {
@@ -694,6 +709,7 @@ void vblank() {
         std::fprintf(g_log, "vblank\t%llu\n", static_cast<unsigned long long>(frame_count()));
     } else if (was) {
         flush();
+        if (g_transfer_file) { std::fclose(g_transfer_file); g_transfer_file = nullptr; }
         if (g_target != ~0ull) dump_target(g_target, g_target_rows, "end of capture");
         std::fclose(g_log);
         g_log = nullptr;

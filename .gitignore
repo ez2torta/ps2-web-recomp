@@ -35,6 +35,7 @@
 *.ppm
 *.indices
 *.clut
+*.gs-transfer
 *.wav
 __pycache__/
 
