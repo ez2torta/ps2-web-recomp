@@ -140,6 +140,13 @@
   <select id="pad" aria-label="Player 1 gamepad" title="Gamepad for player 1, the next connected one is player 2 (press a button on a pad if it is missing)">
     <option value="">Pad: auto</option>
   </select>
+  <details id="keyboard-settings"><summary>Keyboard controls</summary>
+    <label>Player <select id="keyboard-player"><option value="0">1</option><option value="1">2 (local)</option></select></label>
+    <label>Button <select id="keyboard-button"></select></label>
+    <button id="keyboard-assign" type="button">Assign key</button>
+    <button id="keyboard-reset" type="button">Reset player</button>
+    <span id="keyboard-status" aria-live="polite"></span>
+  </details>
   <button id="save-state" class="host-only" type="button" disabled title="Save the game to this device">Save state</button>
   <button id="load-state" class="host-only" type="button" disabled title="Load the quick save from this device">Load state</button>
   <button id="export-state" class="host-only" type="button" title="Download the quick save as a .state file">Export state</button>
@@ -584,7 +591,7 @@ fullscreenButton.addEventListener('click', toggleFullscreen);
 document.getElementById('exit-fullscreen').addEventListener('click', toggleFullscreen);
 canvas.addEventListener('dblclick', toggleFullscreen);
 window.addEventListener('keydown', (e) => {
-  if (e.code !== 'KeyF' || e.repeat || e.target.tagName === 'SELECT') return;
+  if (e.code !== 'KeyF' || e.repeat || e.target.tagName === 'SELECT' || configuringKey) return;
   e.preventDefault();
   toggleFullscreen();
 });
@@ -636,11 +643,53 @@ async function startAudio() {
 }
 
 const keys = new Set();
-const keyMap = { ArrowUp: 4, ArrowRight: 5, ArrowDown: 6, ArrowLeft: 7, KeyZ: 14, KeyX: 13, KeyA: 15, KeyS: 12,
-                 KeyQ: 10, KeyW: 11, Digit1: 8, Digit2: 9, Enter: 3, Backspace: 0 };
+const defaultKeyMap = { ArrowUp: 4, ArrowRight: 5, ArrowDown: 6, ArrowLeft: 7, KeyZ: 14, KeyX: 13, KeyA: 15, KeyS: 12,
+                        KeyQ: 10, KeyW: 11, Digit1: 8, Digit2: 9, Enter: 3, Backspace: 0 };
+const keyNames = ['Select', 'L3', 'R3', 'Start', 'Up', 'Right', 'Down', 'Left', 'L2', 'R2', 'L1', 'R1', 'Triangle', 'Circle', 'Cross', 'Square'];
+let keyMaps = [{...defaultKeyMap}, {}], configuringKey = false;
+try {
+  const saved = JSON.parse(localStorage.getItem('ps2web-keymaps-v1'));
+  if (Array.isArray(saved) && saved.length === 2 && saved.every(map => map && typeof map === 'object' && !Array.isArray(map) &&
+      Object.entries(map).every(([key, bit]) => /^[A-Za-z0-9]+$/.test(key) && Number.isInteger(bit) && bit >= 0 && bit < 16))) {
+    const entries = saved.flatMap(map => Object.keys(map));
+    if (new Set(entries).size === entries.length) keyMaps = saved;
+  }
+} catch (_) {}
+const keyboardPlayer = document.getElementById('keyboard-player'), keyboardButton = document.getElementById('keyboard-button');
+const keyboardAssign = document.getElementById('keyboard-assign'), keyboardStatus = document.getElementById('keyboard-status');
+keyboardButton.replaceChildren(...keyNames.map((name, bit) => new Option(name, String(bit))));
+function showKeyboardBinding(message) {
+  const map = keyMaps[Number(keyboardPlayer.value)], bit = Number(keyboardButton.value);
+  const key = Object.keys(map).find(code => map[code] === bit);
+  keyboardStatus.textContent = message || (key ? keyNames[bit] + ': ' + key : keyNames[bit] + ': unassigned');
+}
+function saveKeyboardBindings() { try { localStorage.setItem('ps2web-keymaps-v1', JSON.stringify(keyMaps)); } catch (_) {} }
+keyboardPlayer.addEventListener('change', () => { configuringKey = false; showKeyboardBinding(); });
+keyboardButton.addEventListener('change', () => { configuringKey = false; showKeyboardBinding(); });
+keyboardAssign.addEventListener('click', () => { keys.clear(); configuringKey = true; showKeyboardBinding('Press a key (Escape cancels)'); });
+document.getElementById('keyboard-reset').addEventListener('click', () => {
+  const player = Number(keyboardPlayer.value), reset = player === 0 ? {...defaultKeyMap} : {};
+  if (Object.keys(reset).some(code => code in keyMaps[1 - player])) { showKeyboardBinding('A default key is assigned to the other player'); return; }
+  keyMaps[player] = reset; configuringKey = false; keys.clear(); saveKeyboardBindings(); showKeyboardBinding();
+});
+showKeyboardBinding();
 const stickKeys = new Set(['KeyI', 'KeyJ', 'KeyK', 'KeyL']);
-window.addEventListener('keydown', (e) => { if (e.code in keyMap || stickKeys.has(e.code)) { keys.add(e.code); e.preventDefault(); } });
+window.addEventListener('keydown', (e) => {
+  if (configuringKey) {
+    e.preventDefault(); e.stopImmediatePropagation(); configuringKey = false;
+    if (e.code === 'Escape') { showKeyboardBinding('Cancelled'); return; }
+    if (!/^[A-Za-z0-9]+$/.test(e.code) || e.code === 'KeyF' || stickKeys.has(e.code)) { showKeyboardBinding('Key reserved; choose another'); return; }
+    const player = Number(keyboardPlayer.value), bit = Number(keyboardButton.value);
+    if (e.code in keyMaps[1 - player]) { showKeyboardBinding('Key already assigned to the other player'); return; }
+    for (const code of Object.keys(keyMaps[player])) if (keyMaps[player][code] === bit) delete keyMaps[player][code];
+    delete keyMaps[player][e.code]; keyMaps[player][e.code] = bit;
+    saveKeyboardBindings(); showKeyboardBinding(); return;
+  }
+  if (e.target.closest && e.target.closest('#keyboard-settings')) return;
+  if (keyMaps.some(map => e.code in map) || stickKeys.has(e.code)) { keys.add(e.code); e.preventDefault(); }
+});
 window.addEventListener('keyup', (e) => { keys.delete(e.code); });
+window.addEventListener('blur', () => keys.clear());
 const padButtons = [[0, 14], [1, 13], [2, 15], [3, 12], [4, 10], [5, 11], [6, 8], [7, 9], [8, 0], [9, 3], [10, 1], [11, 2],
                     [12, 4], [13, 6], [14, 7], [15, 5]];
 const axis = (v) => Math.max(0, Math.min(255, Math.round((v + 1) * 127.5)));
@@ -649,7 +698,7 @@ const players = [0, 1].map(() => ({ plugged: false, pad: -1, pressure: '', stron
 const motorStrength = (v) => v < 16 ? 0 : Math.sqrt(v / 255);
 function pollPlayer(port, gamepad, own) {
   const player = players[port];
-  const plugged = port === 0 || !!gamepad;
+  const plugged = port === 0 || !!gamepad || Object.keys(keyMaps[port]).length > 0;
   if (plugged !== player.plugged) {
     player.plugged = plugged;
     Module._ps2web_pad_connected(port, plugged ? 1 : 0);
@@ -659,7 +708,6 @@ function pollPlayer(port, gamepad, own) {
   const pressure = new Array(16).fill(255);
   if (own) {
     buttons |= touchPad.buttons;
-    for (const k of keys) if (k in keyMap) buttons |= 1 << keyMap[k];
     if (keys.has('KeyJ')) lx = 0;
     if (keys.has('KeyL')) lx = 255;
     if (keys.has('KeyI')) ly = 0;
@@ -669,6 +717,7 @@ function pollPlayer(port, gamepad, own) {
       ly = axis(touchPad.y);
     }
   }
+  for (const k of keys) if (k in keyMaps[port]) buttons |= 1 << keyMaps[port][k];
   const full = buttons;
   if (gamepad) {
     for (const [index, bit] of padButtons) {
