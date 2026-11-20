@@ -221,6 +221,7 @@ void framemeter_sample(std::uint64_t frame) {
         rec[0xC50 + side] = g_ram[team + 7];
     }
     rec[7] = valid;
+    for (std::uint32_t side = 0; side < 2; ++side) std::memcpy(rec + 0xC52 + side * 2, g_ram + 0x9BEA20 + side * 0xC, 2);  // held pad word
     if (env_log) {
         for (std::uint32_t side = 0; side < 2; ++side) {
             if (!(valid & (1u << side))) continue;

@@ -31,7 +31,7 @@ static_assert(sizeof(FrameMeterHeader) == 64);
 //   +0x00 u32 frame number   +0x04 u16 scene word   +0x06 u8 game mode   +0x07 u8 valid mask (bit s = side s)
 //   +0x08 u8 point[0]   +0x09 u8 point[1]
 //   +0x10 player[0] (0x600 bytes)   +0x610 player[1]   +0xC10 extra[0] (0x20)   +0xC30 extra[1]
-//   +0xC50 u8 combo[0]   +0xC51 u8 combo[1]
+//   +0xC50 u8 combo[0]   +0xC51 u8 combo[1]   +0xC52 u16 held pad word side 0   +0xC54 u16 held pad word side 1
 // `extra` is the 0x20-byte member block of the point character (char id, HP, visible HP, stun, guard).
 inline constexpr std::uint32_t kFrameMeterRecordBytes = 0xC60;
 

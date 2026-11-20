@@ -16,7 +16,7 @@
 (function (root) {
   'use strict';
 
-  const REC = { frame: 0x00, scene: 0x04, mode: 0x06, valid: 0x07, point: 0x08, player: 0x10, extra: 0xC10, combo: 0xC50 };
+  const REC = { frame: 0x00, scene: 0x04, mode: 0x06, valid: 0x07, point: 0x08, player: 0x10, extra: 0xC10, combo: 0xC50, pad: 0xC52 };
   const PLAYER_BYTES = 0x600, EXTRA_BYTES = 0x20;
   const HB_OFFSET = 0x39E, HB_ATTACK_MASK = 0x11; // bit 0 attack box, bit 4 throw box (viewer's hitbox slots)
   const SCENE_COMBAT = 0x03;                       // low byte of the scene word 0x303
@@ -79,6 +79,7 @@
         else if (!neutral) state[s] = S.hadActive ? 'B' : 'G';
         else { S.hadActive = false; state[s] = null; }
       }
+      this.state = state;
       const busy = state[0] !== null || state[1] !== null;
       if (busy) {
         if (this.frozen) this.begin();
@@ -167,6 +168,61 @@
   addEventListener('keydown', (e) => { if (e.key === 'F8') { visible = !visible; dock.style.display = visible ? 'flex' : 'none'; refit(); e.preventDefault(); } });
   requestAnimationFrame(() => requestAnimationFrame(refit));
 
+
+  // ---- recorder: F9 start/stop, F7 marker (numbered), F10 download CSV (+ full struct JSON with ?fm_full=1) ----
+  const full = params.get('fm_full') === '1', MAX_ROWS = 7200;
+  let recording = false, rows = [], markerNext = 1, pendingMarker = '', recStart = 0;
+  const hexs = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
+  function recordStep(rec) {
+    const row = { frame: rec.frame, scene: rec.scene, mode: rec.mode, marker: pendingMarker, sides: [] };
+    pendingMarker = '';
+    for (let s = 0; s < 2; s++) {
+      const sd = rec.sides[s], ok = rec.valid & (1 << s);
+      if (!ok) { row.sides.push(null); continue; }
+      const p = sd.p, ex = sd.ex, dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
+      const act = meter.actOffset;
+      row.sides.push({
+        char: ex[0], point: sd.point, act: p[act], prev: p[act + 2], hb: p[HB_OFFSET], hp: ex[4] | (ex[5] << 8), guard: ex[0xA] | (ex[0xB] << 8),
+        stunGauge: ex[8] | (ex[9] << 8), stunTimer: dv.getInt16(0x582, true), w1c0: dv.getUint16(0x1C0, true), b4f0: p[0x4F0], facing: p[0x8C],
+        x: dv.getFloat32(0, true), y: dv.getFloat32(4, true), pad: sd.pad, combo: sd.combo, cell: (meter.state && meter.state[s]) || '',
+        raw: full ? hexs(p) : null,
+      });
+    }
+    rows.push(row);
+    if (rows.length >= MAX_ROWS) toggleRecording(false);
+  }
+  function toggleRecording(on) {
+    recording = on === undefined ? !recording : on;
+    if (recording) { rows = []; markerNext = 1; pendingMarker = ''; recStart = performance.now(); }
+  }
+  const COLS = ['char', 'point', 'act', 'prev', 'hb', 'hp', 'guard', 'stunGauge', 'stunTimer', 'w1c0', 'b4f0', 'facing', 'x', 'y', 'pad', 'combo', 'cell'];
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: type || 'text/plain' }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  function saveRecording() {
+    if (!rows.length) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const head = ['frame', 'scene', 'mode', 'marker'];
+    for (const n of [1, 2]) for (const c of COLS) head.push('p' + n + '_' + c);
+    const lines = [head.join(',')];
+    for (const r of rows) {
+      const cells = [r.frame, '0x' + r.scene.toString(16), r.mode, r.marker];
+      for (const sd of r.sides) for (const c of COLS) cells.push(sd ? (typeof sd[c] === 'number' && c === 'pad' ? '0x' + sd[c].toString(16).padStart(4, '0') : sd[c]) : '');
+      lines.push(cells.join(','));
+    }
+    const note = '# KOF XI frame meter recording; act offset +0x' + meter.actOffset.toString(16) + ', neutral <= ' + meter.neutralMax + ', ' + rows.length + ' frames\n';
+    download('fm-rec-' + stamp + '.csv', note + lines.join('\n') + '\n', 'text/csv');
+    if (full) download('fm-rec-' + stamp + '-full.json', JSON.stringify({ actOffset: meter.actOffset, rows: rows.map((r) => ({ frame: r.frame, marker: r.marker, p: r.sides.map((sd) => sd && sd.raw) })) }), 'application/json');
+  }
+  addEventListener('keydown', (e) => {
+    if (e.key === 'F9') { toggleRecording(); e.preventDefault(); }
+    else if (e.key === 'F7') { if (recording) pendingMarker = 'M' + markerNext++; e.preventDefault(); }
+    else if (e.key === 'F10') { saveRecording(); e.preventDefault(); }
+  });
+
   let last = 0, enabled = false, prevSnap = [null, null];
   const changes = [new Uint16Array(PLAYER_BYTES), new Uint16Array(PLAYER_BYTES)];
   let learnFrames = 0;
@@ -187,10 +243,12 @@
         p: heap.slice(o + REC.player + s * PLAYER_BYTES, o + REC.player + (s + 1) * PLAYER_BYTES),
         ex: heap.slice(o + REC.extra + s * EXTRA_BYTES, o + REC.extra + (s + 1) * EXTRA_BYTES),
         combo: heap[o + REC.combo + s],
+        pad: heap[o + REC.pad + s * 2] | (heap[o + REC.pad + s * 2 + 1] << 8),
       }));
       const rec = { frame: dv.getUint32(REC.frame, true), scene: dv.getUint16(REC.scene, true), mode: heap[o + REC.mode], valid, sides };
       meter.push(rec);
       if (learn) learnStep(rec);
+      if (recording) recordStep(rec);
     }
   }
 
@@ -247,10 +305,11 @@
     if (!rec) text('FRAME METER (experimental) - waiting for the game', LEFT, 90, '#aaa');
     else {
       const inCombat = (rec.scene & 0xFF) === SCENE_COMBAT;
-      text('FRAME METER (experimental)  F8 hides   scene ' + hex(rec.scene, 4) + ' mode ' + hex(rec.mode) + (inCombat ? '' : '  (not in a fight)'), LEFT, 88, '#aaa');
+      if (recording) text('REC ' + rows.length + 'f', W - 70, 88, '#ff5555');
+      text('FRAME METER (experimental)  scene ' + hex(rec.scene, 4) + ' mode ' + hex(rec.mode) + (inCombat ? '' : '  (not in a fight)'), LEFT, 88, '#aaa');
       const p = (s) => R[s].act == null ? 'P' + (s + 1) + ' -' : 'P' + (s + 1) + ' act[+' + hex(meter.actOffset, 3) + ']=' + R[s].act + ' hb=' + hex(R[s].hb) + ' hp=' + R[s].hp + ' grd=' + R[s].guard;
       text(p(0) + '   ' + p(1), LEFT, 101, '#aaa');
-      text('neutral <= ' + meter.neutralMax + '   legend: green startup, red active, blue recovery, yellow stun (pale = block)', LEFT, 113, '#777');
+      text('F8 hide  F9 ' + (recording ? 'stop' : 'record') + '  F7 marker  F10 save' + (rows.length && !recording ? ' (' + rows.length + 'f)' : '') + '   neutral <= ' + meter.neutralMax, LEFT, 113, '#777');
     }
     if (learn) {
       g.font = '10px monospace';
