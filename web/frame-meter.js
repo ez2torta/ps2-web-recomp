@@ -2,7 +2,7 @@
 //
 // Off unless the page URL has ?framemeter (any value but 0). It reads the per-frame capture ring the
 // runtime fills (runtime/include/ps2/framemeter.hpp), turns it into per-player timelines and draws them
-// in a canvas over the game. Addresses and struct offsets are those of the Japanese release (SLPS-25660).
+// in a strip above the game (the game shrinks to make room). Addresses and struct offsets are those of the Japanese release (SLPS-25660).
 //
 // Colours follow SF6: green = startup, crimson = active (an attack or throw box is live), blue = recovery,
 // yellow = the defender's hit/block stun (pale yellow = block). Header per player: Startup / Total / Advantage,
@@ -150,13 +150,22 @@
   const COLORS = { G: '#1fc8a0', R: '#d6336c', B: '#1c70d6', Y: '#ffe600', K: '#fff59d' };
   const CELL = 8, LEFT = 10, BAR_H = 14, W = LEFT * 2 + WINDOW * CELL, H = learn ? 230 : 118;
 
+  // The meter lives in its own strip above the game, in the page's flex column, so the game canvas
+  // shrinks to the remaining space instead of being covered. F8 hides the strip (the game grows back).
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
-  canvas.style.cssText = 'position:fixed;left:50%;bottom:6px;transform:translateX(-50%);z-index:50;pointer-events:none;max-width:98vw;';
-  document.body.appendChild(canvas);
+  canvas.style.cssText = 'display:block;width:' + W + 'px;max-width:100%;height:auto;'; // the shell's `canvas {width:100%;height:100%}` rule would stretch it
+  const dock = document.createElement('div');
+  dock.id = 'fm-dock';
+  dock.style.cssText = 'flex:none;display:flex;justify-content:center;background:#08080a;border-bottom:1px solid #222;padding:2px 0;';
+  dock.appendChild(canvas);
+  const stage = document.getElementById('stage');
+  document.body.insertBefore(dock, stage || document.body.firstChild);
   const g = canvas.getContext('2d');
+  const refit = () => window.dispatchEvent(new Event('resize'));
   let visible = true;
-  addEventListener('keydown', (e) => { if (e.key === 'F8') { visible = !visible; canvas.style.display = visible ? '' : 'none'; e.preventDefault(); } });
+  addEventListener('keydown', (e) => { if (e.key === 'F8') { visible = !visible; dock.style.display = visible ? 'flex' : 'none'; refit(); e.preventDefault(); } });
+  requestAnimationFrame(() => requestAnimationFrame(refit));
 
   let last = 0, enabled = false, prevSnap = [null, null];
   const changes = [new Uint16Array(PLAYER_BYTES), new Uint16Array(PLAYER_BYTES)];
@@ -229,7 +238,7 @@
 
   function draw() {
     g.clearRect(0, 0, W, H);
-    g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#08080a'; g.fillRect(0, 0, W, H);
     g.font = '12px monospace'; g.textBaseline = 'alphabetic';
     drawHeader(0, 14); drawBar(0, 20);
     drawBar(1, 40); drawHeader(1, 72);
