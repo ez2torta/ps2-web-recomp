@@ -11,6 +11,7 @@
 #include "iop/spu2.hpp"
 #include "ipu/ipu.hpp"
 #include "ps2/disc.hpp"
+#include "ps2/framemeter.hpp"
 #include "kernel.hpp"
 #include "ps2/generated.hpp"
 #include "ps2/memory.hpp"
@@ -165,8 +166,77 @@ void apply_patches(bool boot) {
     }
 }
 
+}  // namespace (file-local helpers); the frame meter entry points below have external linkage
+
+// ---- experimental KOF XI frame meter capture (see ps2/framemeter.hpp) ----
+namespace {
+alignas(16) std::uint8_t g_fm_storage[sizeof(FrameMeterHeader) + std::size_t{kFrameMeterFrames} * kFrameMeterRecordBytes];
+constexpr std::uint32_t kFmScene = 0x9BDAB0, kFmMode = 0x9E9780, kFmTeam = 0x9BDB50, kFmTeamStride = 0x248, kFmPlayerTable = 0x9B6BC0;
+FrameMeterHeader *fm_header() { return reinterpret_cast<FrameMeterHeader *>(g_fm_storage); }
+bool fm_ready() {
+    FrameMeterHeader *h = fm_header();
+    if (h->magic != kFrameMeterMagic) {
+        h->magic = kFrameMeterMagic;
+        h->record_bytes = kFrameMeterRecordBytes;
+        h->count = kFrameMeterFrames;
+    }
+    return true;
+}
+}  // namespace
+
+void framemeter_enable(bool on) {
+    fm_ready();
+    fm_header()->enabled.store(on ? 1u : 0u);
+}
+
+const FrameMeterHeader *framemeter_ring() {
+    fm_ready();
+    return fm_header();
+}
+
+void framemeter_sample(std::uint64_t frame) {
+    FrameMeterHeader *h = fm_header();
+    static const bool env_on = std::getenv("PS2_FRAMEMETER") != nullptr, env_log = std::getenv("PS2_FRAMEMETER_LOG") != nullptr;
+    if (env_on && h->magic != kFrameMeterMagic) framemeter_enable(true);
+    if (h->magic != kFrameMeterMagic || !h->enabled.load(std::memory_order_relaxed)) return;
+    const std::uint32_t n = h->head.load(std::memory_order_relaxed);
+    std::uint8_t *rec = g_fm_storage + sizeof(FrameMeterHeader) + std::size_t{n % kFrameMeterFrames} * kFrameMeterRecordBytes;
+    std::memset(rec, 0, kFrameMeterRecordBytes);
+    const std::uint32_t f32 = static_cast<std::uint32_t>(frame);
+    std::memcpy(rec, &f32, 4);
+    std::memcpy(rec + 4, g_ram + kFmScene, 2);
+    rec[6] = g_ram[kFmMode];
+    std::uint8_t valid = 0;
+    for (std::uint32_t side = 0; side < 2; ++side) {
+        const std::uint32_t team = kFmTeam + side * kFmTeamStride;
+        const std::uint8_t point = g_ram[team + 3];
+        rec[8 + side] = point;
+        if (point > 2) continue;
+        std::uint32_t player = 0;
+        std::memcpy(&player, g_ram + kFmPlayerTable + (side * 3 + point) * 4, 4);
+        if (player < 0x100000 || player + kFrameMeterPlayerBytes > kRamSize) continue;
+        valid |= static_cast<std::uint8_t>(1u << side);
+        std::memcpy(rec + 0x10 + side * kFrameMeterPlayerBytes, g_ram + player, kFrameMeterPlayerBytes);
+        std::memcpy(rec + 0xC10 + side * 0x20, g_ram + team + 0x150 + point * 0x20, 0x20);
+        rec[0xC50 + side] = g_ram[team + 7];
+    }
+    rec[7] = valid;
+    if (env_log) {
+        for (std::uint32_t side = 0; side < 2; ++side) {
+            if (!(valid & (1u << side))) continue;
+            const std::uint8_t *p = rec + 0x10 + side * kFrameMeterPlayerBytes, *ex = rec + 0xC10 + side * 0x20;
+            std::fprintf(stderr, "[fm] f%u s%u scene %04x char %02x hp %u guard %u act[EC] %u hb %02x pad %04x\n", f32, side, static_cast<unsigned>(rec[4] | (rec[5] << 8)), ex[0],
+                         static_cast<unsigned>(ex[4] | (ex[5] << 8)), static_cast<unsigned>(ex[0xA] | (ex[0xB] << 8)), p[0xEC], p[0x39E], static_cast<unsigned>(g_ram[0x9BEA20 + side * 0xC] | (g_ram[0x9BEA21 + side * 0xC] << 8)));
+        }
+    }
+    h->head.store(n + 1, std::memory_order_release);
+}
+
+namespace {
+
 void vblank() {
     ++g_frames;
+    framemeter_sample(g_frames);
     time_frames();
     apply_presses();
     apply_patches(false);

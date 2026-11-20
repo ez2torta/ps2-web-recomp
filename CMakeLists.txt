@@ -85,6 +85,7 @@ if(EMSCRIPTEN OR EXISTS "${PS2_WGPU_DIR}/lib/libwgpu_native.a")
     target_compile_definitions(ps2runtime PUBLIC PS2_GPU)
     if(EMSCRIPTEN)
         configure_file(${CMAKE_SOURCE_DIR}/web/file-disc.js ${CMAKE_CURRENT_BINARY_DIR}/file-disc.js COPYONLY)
+        configure_file(${CMAKE_SOURCE_DIR}/web/frame-meter.js ${CMAKE_CURRENT_BINARY_DIR}/frame-meter.js COPYONLY)
         target_compile_options(ps2runtime PUBLIC --use-port=emdawnwebgpu)
         target_link_options(ps2runtime PUBLIC --use-port=emdawnwebgpu)
     else()
@@ -138,7 +139,7 @@ if(PS2_GENERATED)
         endif()
         target_link_libraries(ps2web PRIVATE ps2game ps2runtime)
         target_link_options(ps2web PRIVATE --profiling-funcs -sJSPI -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 -sPTHREAD_POOL_SIZE=2 -sALLOW_TABLE_GROWTH=1 -lidbfs.js -sSTACK_SIZE=16777216 -sENVIRONMENT=web
-            -sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted,_ps2web_quick_state,_ps2web_video_options,_ps2web_stream
+            -sEXPORTED_FUNCTIONS=_main,_ps2web_pad,_ps2web_pad_connected,_ps2web_resize,_ps2web_gpu_ms,_ps2web_frames,_ps2web_primitives,_ps2web_audio_ring,_ps2web_audio_queued_ms,_ps2web_idle_ms,_ps2web_vu_interpreted,_ps2web_quick_state,_ps2web_video_options,_ps2web_stream,_ps2web_fm_ring,_ps2web_fm_enable,_ps2web_ee_ram
             -sEXPORTED_RUNTIME_METHODS=callMain,addRunDependency,removeRunDependency,HEAPU8,ENV
             --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html --preload-file ${PS2_WEB_ELF}@/game/core.elf)
         set_target_properties(ps2web PROPERTIES SUFFIX ".html" LINK_DEPENDS ${CMAKE_SOURCE_DIR}/web/shell.html)

@@ -1,3 +1,5 @@
+#include "ps2/framemeter.hpp"
+#include "ps2/memory.hpp"
 #include "ps2/disc.hpp"
 #include "ps2/state_request.hpp"
 #include "ps2/system.hpp"
@@ -391,6 +393,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_gpu_ms() { return ps2::gpu_busy_ms
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_frames() { return static_cast<double>(ps2::frames_run()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_primitives() { return static_cast<double>(ps2::primitives_drawn()); }
 extern "C" EMSCRIPTEN_KEEPALIVE void *ps2web_audio_ring() { return &g_audio; }
+extern "C" EMSCRIPTEN_KEEPALIVE const void *ps2web_fm_ring() { return ps2::framemeter_ring(); }
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2web_fm_enable(int on) { ps2::framemeter_enable(on != 0); }
+extern "C" EMSCRIPTEN_KEEPALIVE const void *ps2web_ee_ram() { return ps2::g_ram; }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_audio_queued_ms() { return audio_queued_ms(); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_vu_interpreted() { return static_cast<double>(ps2::vu1_interpreted_calls()); }
 extern "C" EMSCRIPTEN_KEEPALIVE double ps2web_idle_ms(int which) {
