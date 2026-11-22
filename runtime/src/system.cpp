@@ -116,16 +116,27 @@ void dump_frame() {
 void apply_presses() {
     // Once the last press is over the pad is left alone, so the web page's live input works after a scripted start.
     std::uint64_t last = 0;
-    for (const Press &p : g_options.presses) last = std::max<std::uint64_t>(last, p.frame + p.frames);
+    static bool plugged_second = false;
+    for (const Press &p : g_options.presses) {
+        last = std::max<std::uint64_t>(last, p.frame + p.frames);
+        if (p.pad == 1 && !plugged_second) {
+            plugged_second = true;
+            iop::sio2::set_connected(1, true);   // scripted second-pad input implies a second pad
+        }
+    }
     if (!g_options.presses.empty() && g_frames <= last) {
-        std::uint16_t mask = 0;
+        std::uint16_t mask = 0, mask2 = 0;
         std::uint8_t stick = 0;
         for (const Press &p : g_options.presses)
             if (g_frames >= p.frame && g_frames < p.frame + p.frames) {
-                mask |= p.buttons;
-                stick |= p.stick;
+                if (p.pad == 1) mask2 |= p.buttons;
+                else {
+                    mask |= p.buttons;
+                    stick |= p.stick;
+                }
             }
         iop::sio2::set_buttons(0, mask);
+        iop::sio2::set_buttons(1, mask2);
         iop::sio2::set_axis(0, 2, (stick & 4u) ? 0x00 : (stick & 8u) ? 0xFF : 0x80);
         iop::sio2::set_axis(0, 3, (stick & 1u) ? 0x00 : (stick & 2u) ? 0xFF : 0x80);
     }
@@ -703,11 +714,16 @@ bool parse_press(const std::string &spec, Press &press) {
     }
     press.buttons = 0;
     press.stick = 0;
+    press.pad = 0;
     static const char *const kStick[4] = {"lup", "ldown", "lleft", "lright"};
     std::size_t start = 0;
     while (start <= rest.size()) {
         const auto plus = rest.find('+', start);
-        const std::string name = rest.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
+        std::string name = rest.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
+        if (name.compare(0, 3, "p2.") == 0) {
+            press.pad = 1;
+            name = name.substr(3);
+        }
         int bit = -1;
         for (int i = 0; i < 16; ++i)
             if (name == kNames[i]) bit = i;

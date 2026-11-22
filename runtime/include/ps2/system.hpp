@@ -21,6 +21,7 @@ struct Press {
     std::uint32_t frames;
     std::uint16_t buttons;
     std::uint8_t stick = 0;
+    std::uint8_t pad = 0;   // 0 = first pad, 1 = second pad (button names prefixed with p2.)
 };
 
 struct Patch {

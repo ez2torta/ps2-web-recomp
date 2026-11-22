@@ -329,6 +329,19 @@ void start(int ch) {
     static const bool trace = std::getenv("PS2_TRACE_DMA") != nullptr;
     if (trace) std::fprintf(stderr, "[dma] ch%d chcr 0x%08X madr 0x%08X qwc %u tadr 0x%08X thread %d%s\n", ch, c.chcr, c.madr, c.qwc, c.tadr,
                             kernel::current_thread(), kernel::in_handler() ? " (handler)" : "");
+    // PS2_TRACE_DMA_RA[=hex RAM address of a u32 frame counter]: one line per DMA start with the code that started it.
+    // `ra` is the register at the CHCR write; `saved` is [sp+0x20], which holds the caller's ra when the write comes
+    // from a library routine that spilled it there (as sceDmaSend does). Offline tools pick whichever lies in game code.
+    static const char *const trace_ra = std::getenv("PS2_TRACE_DMA_RA");
+    if (trace_ra && ch <= 2) {
+        const std::uint32_t sp = g_cpu.r[29].w[0];
+        std::uint32_t saved = 0, counter = 0;
+        std::memcpy(&saved, g_ram + ((sp + 0x20) & (kRamSize - 16)), 4);
+        const std::uint32_t counter_at = static_cast<std::uint32_t>(std::strtoul(trace_ra, nullptr, 16));
+        if (counter_at > 1) std::memcpy(&counter, g_ram + (counter_at & (kRamSize - 16)), 4);
+        std::fprintf(stderr, "[dmara] ch%d f=%u pc=%08X ra=%08X saved=%08X madr=%08X tadr=%08X qwc=%u mode=%u\n", ch, counter,
+                     g_cpu.pc, g_cpu.r[31].w[0], saved, c.madr, c.tadr, c.qwc, (c.chcr >> 2) & 3u);
+    }
     if (ch == 5 || ch == 6 || ch == 7) {
         finish(ch);
         return;
