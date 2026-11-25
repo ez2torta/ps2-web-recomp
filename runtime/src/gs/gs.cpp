@@ -4,6 +4,7 @@
 #include "queue.hpp"
 #include "raster.hpp"
 #include "../hw.hpp"
+#include "../dmac.hpp"
 #ifdef PS2_GPU
 #include "gpu/gpu.hpp"
 #endif
@@ -489,6 +490,7 @@ namespace capture {
 struct Batch {
     bool open = false;
     std::uint64_t prim = 0, frame = 0, zbuf = 0, tex0 = 0, tex1 = 0, clamp = 0, alpha = 0, test = 0, xyoffset = 0, scissor = 0;
+    std::uint32_t opc = 0, ora = 0, osaved = 0;
     int ctx = 0;
     std::uint64_t first = 0, count = 0;
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0, u0 = 0, v0 = 0, u1 = 0, v1 = 0;
@@ -535,7 +537,7 @@ bool active() {
             g_done = true;
             return false;
         }
-        std::fprintf(g_log, "draw\tprims\tfirst\tctx\tprim\tframe\tzbuf\ttex0\ttex1\tclamp\talpha\ttest\txyoffset\tscissor\tbox\traw_xy\ttexels\n");
+        std::fprintf(g_log, "draw\tprims\tfirst\tctx\tprim\tframe\tdma_pc\tdma_ra\tdma_saved\tzbuf\ttex0\ttex1\tclamp\talpha\ttest\txyoffset\tscissor\tbox\traw_xy\ttexels\n");
         if (std::getenv("PS2_CAPTURE_VERTICES")) {
             g_vertex_log = std::fopen((g_dir + "/vertices.tsv").c_str(), "w");
             if (g_vertex_log)
@@ -619,9 +621,11 @@ void flush() {
     Batch &b = g_batch;
     if (!b.open) return;
     b.open = false;
-    std::fprintf(g_log, "%llu\t%llu\t%llu\t%d\t%03llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%.1f,%.1f-%.1f,%.1f\t%u,%u-%u,%u\t%.1f,%.1f-%.1f,%.1f\n",
+    std::fprintf(g_log, "%llu\t%llu\t%llu\t%d\t%03llX\t%016llX\t%08X\t%08X\t%08X\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%016llX\t%.1f,%.1f-%.1f,%.1f\t%u,%u-%u,%u\t%.1f,%.1f-%.1f,%.1f\n",
                  static_cast<unsigned long long>(g_draws++), static_cast<unsigned long long>(b.count), static_cast<unsigned long long>(b.first), b.ctx,
-                 static_cast<unsigned long long>(b.prim & 0x7FFu), static_cast<unsigned long long>(b.frame), static_cast<unsigned long long>(b.zbuf),
+                 static_cast<unsigned long long>(b.prim & 0x7FFu), static_cast<unsigned long long>(b.frame),
+                 b.opc, b.ora, b.osaved,
+                 static_cast<unsigned long long>(b.zbuf),
                  static_cast<unsigned long long>(b.tex0), static_cast<unsigned long long>(b.tex1), static_cast<unsigned long long>(b.clamp),
                  static_cast<unsigned long long>(b.alpha), static_cast<unsigned long long>(b.test), static_cast<unsigned long long>(b.xyoffset),
                  static_cast<unsigned long long>(b.scissor), b.x0, b.y0, b.x1, b.y1, b.raw_x0, b.raw_y0, b.raw_x1, b.raw_y1, b.u0, b.v0, b.u1, b.v1);
@@ -642,14 +646,19 @@ void prim(const State &s, int needed) {
     const int c = static_cast<int>(prim >> 9) & 1;
     const Context &x = s.ctx[c];
     Batch &b = g_batch;
+    const std::uint32_t opc = dmac::gif_owner_pc(), ora = dmac::gif_owner_ra(), osaved = dmac::gif_owner_saved();
     switch_target(x.frame);
     if (!b.open || b.prim != (prim & 0x7FFu) || b.ctx != c || b.frame != x.frame || b.zbuf != x.zbuf || b.tex0 != x.tex0 || b.tex1 != x.tex1 ||
-        b.clamp != x.clamp || b.alpha != x.alpha || b.test != x.test || b.xyoffset != x.xyoffset || b.scissor != x.scissor) {
+        b.clamp != x.clamp || b.alpha != x.alpha || b.test != x.test || b.xyoffset != x.xyoffset || b.scissor != x.scissor ||
+        b.opc != opc || b.ora != ora || b.osaved != osaved) {
         flush();
         b = Batch{};
         b.open = true;
         b.prim = prim & 0x7FFu;
         b.ctx = c;
+        b.opc = opc;
+        b.ora = ora;
+        b.osaved = osaved;
         b.frame = x.frame;
         b.zbuf = x.zbuf;
         b.tex0 = x.tex0;

@@ -35,6 +35,7 @@ constexpr std::uint32_t kBase[10] = {0x10008000u, 0x10009000u, 0x1000A000u, 0x10
 
 std::uint64_t g_starts[10];
 bool g_mfifo_waiting = false;
+std::uint32_t g_owner_pc = 0, g_owner_ra = 0, g_owner_saved = 0;
 
 // MFIFO: with D_CTRL.MFD set to VIF1, fromSPR fills a ring buffer in main memory (D_RBOR,
 // D_RBSR) and VIF1 runs a chain out of it, stalling while its tag address has caught up
@@ -326,6 +327,12 @@ void start(int ch) {
     c.paused = false;
     c.tag_end = c.qwc && chain_ends_after_current(c);
     ++g_starts[ch];
+    if (ch == 2) {
+        const std::uint32_t sp = g_cpu.r[29].w[0];
+        g_owner_pc = g_cpu.pc;
+        g_owner_ra = g_cpu.r[31].w[0];
+        std::memcpy(&g_owner_saved, g_ram + ((sp + 0x20) & (kRamSize - 16)), 4);
+    }
     static const bool trace = std::getenv("PS2_TRACE_DMA") != nullptr;
     if (trace) std::fprintf(stderr, "[dma] ch%d chcr 0x%08X madr 0x%08X qwc %u tadr 0x%08X thread %d%s\n", ch, c.chcr, c.madr, c.qwc, c.tadr,
                             kernel::current_thread(), kernel::in_handler() ? " (handler)" : "");
@@ -520,5 +527,9 @@ void state(ps2::state::Stream &s) {
         g_mfifo_waiting = mfifo_vif1() && (v.chcr & 0x100u) && !v.paused && !v.qwc && ring(v.tadr) == ring(g_ch[8].madr);
     }
 }
+
+std::uint32_t gif_owner_pc() { return g_owner_pc; }
+std::uint32_t gif_owner_ra() { return g_owner_ra; }
+std::uint32_t gif_owner_saved() { return g_owner_saved; }
 
 }
