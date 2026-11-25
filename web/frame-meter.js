@@ -5,46 +5,80 @@
 // in a strip above the game (the game shrinks to make room). Addresses and struct offsets are those of the Japanese release (SLPS-25660).
 //
 // Colours follow SF6: green = startup, crimson = active (an attack or throw box is live), blue = recovery,
-// yellow = the defender's hit/block stun (pale yellow = block). Header per player: Startup / Total / Advantage,
-// using the rule read off SF6's own screenshots: startup = cells up to and including the first active frame,
-// total = all cells of the attacker's bar, advantage = last stun cell of the defender - last cell of the attacker.
+// yellow = the defender's hit reaction (hitstun / knockdown / getup), pale yellow = guard stun (block).
+// Header per player: Startup / Total / Advantage, using the rule read off SF6's own screenshots: startup =
+// cells up to and including the first active frame, total = all cells of the attacker's bar.
 //
-// "Actionable" is the weak point: the player's action id (struct byte, default +0xEC) is compared with a
-// neutral limit (ids <= limit count as neutral: stand, walk, crouch, jump...). Both are guesses taken from the
-// arcade struct map and must be confirmed; override them with ?fm_act=0xEC&fm_neutral=26. ?fm_learn=1 lists the
-// struct bytes that change rarely (candidates for the action id) while you play.
+// "Actionable" is taken from the game's own signals, not from a threshold over the action id (the earlier
+// guess). Found on the PS2 practice dummy by the frame-advantage work of ATG-02 (scripts/ps2-research/frameadv,
+// scripts/combo-damage-ps2/frameadv_ps2.py, docs/ps2-hacking-notes.md section 10):
+//
+//   busy = attack (+0x490 & 3) | hit stop (+0x494 bit 27) | hit/throw/knockdown/getup reaction (+0x494 bit 0)
+//        | guard stun (+0x530 0x400) | airborne (pose byte +0x27E == 2)
+//        | uninterruptible movement (+0x48C mask: jump start 0x20, jump 0x80/0x100/0x400, backdash 0x400000,
+//          rolls 0x01000000/0x02000000/0x10000000, shift 0x2000/0x4000)
+//
+// Advantage follows the same rule as the in-game display: after a contact, each side's FREE frame is the first
+// frame in which it is not busy (the game's "guard only / buffer" frame, which is the same offset on both
+// sides), and advantage = FREE(P2) - FREE(P1), so it matches the wiki convention. A contact is the rising edge
+// of reaction or hit stop on either side; contacts within 3 frames of a window start belong to the same window.
+//
+// The engine model is the default. ?fm_model=legacy (or ?fm_neutral=N) forces the old guess
+// (actionable when action id <= N, default 26) instead of the engine signals, for comparison. ?fm_act overrides
+// the action-id offset. ?fm_learn=1 lists the struct bytes that change rarely, to keep finding fields.
 (function (root) {
   'use strict';
 
   const REC = { frame: 0x00, scene: 0x04, mode: 0x06, valid: 0x07, point: 0x08, player: 0x10, extra: 0xC10, combo: 0xC50, pad: 0xC52 };
   const PLAYER_BYTES = 0x600, EXTRA_BYTES = 0x20;
   const HB_OFFSET = 0x39E, HB_ATTACK_MASK = 0x11; // bit 0 attack box, bit 4 throw box (viewer's hitbox slots)
-  const SCENE_COMBAT = 0x03;                       // low byte of the scene word 0x303
-  const WINDOW = 80;                               // cells per bar (SF6 shows about 80)
-  const STUN_GRACE = 12;                           // frames to wait for the defender's action to leave neutral
+  const ACT_OFFSET = 0xEC;                        // action id (same offset as the arcade map)
+  const F_ATTACK = 0x490, ATTACK_MASK = 0x03;     // attack action active
+  const F_STATE = 0x494, ST_HITSTOP = 0x08000000, ST_REACT = 0x01;
+  const F_GUARD = 0x530, GUARD_STUN = 0x400;      // guard stun (block), pose byte at +0x27E
+  const POSE_OFFSET = 0x27E;
+  const F_MOVE = 0x48C;
+  const BUSY_48C = 0x20 | 0x80 | 0x100 | 0x400 | 0x400000 | 0x01000000 | 0x02000000 | 0x10000000 | 0x2000 | 0x4000;
+  const SAME_CONTACT = 3, TIMEOUT = 600;
+  const SCENE_COMBAT = 0x03;                      // low byte of the scene word 0x303
+  const WINDOW = 80;                              // cells per bar (SF6 shows about 80)
+
+  // One side's reading for a frame, from the captured 0x600-byte player structure.
+  function readSide(p) {
+    const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
+    const f490 = dv.getUint32(F_ATTACK, true), f494 = dv.getUint32(F_STATE, true);
+    const f530 = dv.getUint32(F_GUARD, true), f48c = dv.getUint32(F_MOVE, true);
+    const attack = (f490 & ATTACK_MASK) !== 0;
+    const hitStop = ((f494 >>> 27) & 1) !== 0;
+    const react = (f494 & ST_REACT) !== 0;
+    const guardStun = (f530 & GUARD_STUN) !== 0;
+    const air = (p[POSE_OFFSET] & 0xF) === 2;
+    return { f490, f494, f530, f48c, pose: p[POSE_OFFSET] & 0xF, attack, hitStop, react, guardStun, air };
+  }
 
   class Meter {
     constructor(opts) {
       opts = opts || {};
-      this.actOffset = opts.actOffset == null ? 0xEC : opts.actOffset;
+      this.actOffset = opts.actOffset == null ? ACT_OFFSET : opts.actOffset;
       this.neutralMax = opts.neutralMax == null ? 26 : opts.neutralMax;
+      this.legacy = !!opts.legacy;        // force the action-id threshold instead of the engine signals
       this.reset();
     }
 
     reset() {
       this.side = [this.newSide(), this.newSide()];
-      this.cells = [[], []];        // per cell: null | { s: 'G'|'R'|'B'|'Y'|'K', n?: run length marker }
+      this.cells = [[], []];        // per cell: null | { s: 'G'|'R'|'B'|'Y'|'K' }
       this.live = false;            // an interaction is being recorded
       this.frozen = true;           // finished interaction stays on screen until the next one starts
       this.frames = 0;
       this.info = [this.newInfo(), this.newInfo()];
-      this.contact = [null, null];  // contact received by side s: 'hit' | 'block'
       this.raw = [{}, {}];
+      this.win = null;              // advantage window: { start, free: [null, null], kind }
+      this.winResult = null;        // { adv, kind } of the last completed window
+      this.prev = { react: [false, false], guard: [false, false], hs: [false, false] };
     }
 
-    newSide() {
-      return { char: -1, hp: -1, guard: -1, stunned: false, sawBusy: false, stunAge: 0, kind: null, hadActive: false, busyOnce: false };
-    }
+    newSide() { return { char: -1, hp: -1, guard: -1, hadActive: false }; }
 
     newInfo() { return { startup: null, total: null, adv: null, kind: null }; }
 
@@ -53,35 +87,63 @@
       this.frames++;
       this.rec = rec;
       const inCombat = (rec.scene & 0xFF) === SCENE_COMBAT;
-      const state = [null, null], activeNow = [false, false], contactNow = [null, null];
+      const frame = rec.frame >>> 0;
+      const state = [null, null];
+      const busy = [false, false], react = [false, false], guard = [false, false], hs = [false, false], edge = [false, false];
+      const pHs = [this.prev.hs[0], this.prev.hs[1]];
+
       for (let s = 0; s < 2; s++) {
         const S = this.side[s], sd = rec.sides[s];
-        if (!inCombat || !(rec.valid & (1 << s)) || !sd) { this.side[s] = this.newSide(); continue; }
+        if (!inCombat || !(rec.valid & (1 << s)) || !sd) { this.side[s] = this.newSide(); this.prev.react[s] = this.prev.guard[s] = this.prev.hs[s] = false; continue; }
         const ex = sd.ex, p = sd.p;
-        const hp = ex[4] | (ex[5] << 8), guard = ex[0xA] | (ex[0xB] << 8), char = ex[0];
-        if (S.char !== char) { Object.assign(S, this.newSide(), { char }); }
-        if (S.hp >= 0 && hp < S.hp) contactNow[s] = 'hit';
-        else if (S.guard >= 0 && guard < S.guard) contactNow[s] = 'block';
-        S.hp = hp; S.guard = guard;
-        const act = p[this.actOffset], hb = p[HB_OFFSET];
-        this.raw[s] = { act, prev: p[this.actOffset + 2], hb, hp, guard, char, point: sd.point };
-        const neutral = act <= this.neutralMax;
-        const active = (hb & HB_ATTACK_MASK) !== 0;
-        activeNow[s] = active;
-        if (contactNow[s]) { S.stunned = true; S.kind = contactNow[s]; S.sawBusy = false; S.stunAge = 0; this.contact[s] = contactNow[s]; }
-        if (S.stunned) {
-          S.stunAge++;
-          if (!neutral) S.sawBusy = true;
-          else if (S.sawBusy || S.stunAge > STUN_GRACE) { S.stunned = false; }
-        }
-        if (S.stunned) state[s] = S.kind === 'block' ? 'K' : 'Y';
-        else if (active) { state[s] = 'R'; S.hadActive = true; }
-        else if (!neutral) state[s] = S.hadActive ? 'B' : 'G';
-        else { S.hadActive = false; state[s] = null; }
+        const char = ex[0], hp = ex[4] | (ex[5] << 8), gd = ex[0xA] | (ex[0xB] << 8);
+        if (S.char !== char) Object.assign(S, this.newSide(), { char });
+        const r = readSide(p);
+        const engine = !this.legacy;
+        const b = engine
+          ? (r.attack || r.hitStop || r.react || r.guardStun || r.air || (r.f48c & BUSY_48C) !== 0)
+          : p[this.actOffset] > this.neutralMax;   // legacy: the old action-id guess
+        busy[s] = b; react[s] = r.react; guard[s] = r.guardStun; hs[s] = r.hitStop;
+        edge[s] = engine
+          ? ((r.react && !this.prev.react[s]) || (r.guardStun && !this.prev.guard[s]))
+          : (S.hp >= 0 && hp < S.hp);              // legacy: a drop in HP is a hit
+        this.prev.react[s] = r.react; this.prev.guard[s] = r.guardStun;
+        this.prev.hs[s] = r.hitStop;
+        const active = r.attack && (p[HB_OFFSET] & HB_ATTACK_MASK) !== 0;
+        let st = null;
+        if (r.guardStun) st = 'K';
+        else if (r.react) st = 'Y';
+        else if (r.attack) st = active ? 'R' : (S.hadActive ? 'B' : 'G');
+        else if (b) st = 'B';                       // airborne, jump, dash, roll, shift, landing recovery
+        if (active) S.hadActive = true;
+        if (!b) S.hadActive = false;
+        S.hp = hp; S.guard = gd;
+        state[s] = st;
+        this.raw[s] = {
+          act: p[this.actOffset], prev: p[this.actOffset + 2], hb: p[HB_OFFSET], f490: r.f490, f494: r.f494,
+          f530: r.f530, f48c: r.f48c, pose: r.pose, busy: b ? 1 : 0, react: r.react ? 1 : 0, hs: r.hitStop ? 1 : 0,
+          hp, guard: gd, char, point: sd.point,
+        };
       }
       this.state = state;
-      const busy = state[0] !== null || state[1] !== null;
-      if (busy) {
+
+      const contact = (edge[0] || edge[1] || (hs[0] && !pHs[0]) || (hs[1] && !pHs[1]));
+      if (contact && !(this.win && frame - this.win.start <= SAME_CONTACT)) {
+        const kind = edge[0] && edge[1] ? 'trade' : (guard[0] && edge[0]) || (guard[1] && edge[1]) ? 'block' : 'hit';
+        this.win = { start: frame, free: [null, null], kind };
+      }
+      if (this.win) {
+        for (let s = 0; s < 2; s++) if (this.win.free[s] == null && !busy[s]) this.win.free[s] = frame;
+        if (this.win.free[0] != null && this.win.free[1] != null) {
+          this.winResult = { adv: this.win.free[1] - this.win.free[0], kind: this.win.kind };
+          this.win = null;
+        } else if (frame - this.win.start > TIMEOUT) {
+          this.win = null;
+        }
+      }
+
+      const anyBusy = state[0] !== null || state[1] !== null;
+      if (anyBusy) {
         if (this.frozen) this.begin();
         for (let s = 0; s < 2; s++) this.cells[s].push(state[s] ? { s: state[s] } : null);
         if (this.cells[0].length > WINDOW) { this.cells[0].shift(); this.cells[1].shift(); this.shifted = (this.shifted || 0) + 1; }
@@ -94,13 +156,14 @@
 
     begin() {
       this.cells = [[], []];
-      this.contact = [null, null];
       this.info = [this.newInfo(), this.newInfo()];
+      this.winResult = null;
       this.shifted = 0;
       this.live = true; this.frozen = false;
     }
 
-    // Startup / total / advantage from the cells recorded so far; `done` when both sides are idle again.
+    // Startup / total / advantage from the recorded cells and the last completed window; `done` when both
+    // sides are idle again.
     refresh(done) {
       const first = (c) => c.findIndex((x) => x), last = (c) => { for (let i = c.length - 1; i >= 0; i--) if (c[i]) return i; return -1; };
       const infos = [this.newInfo(), this.newInfo()];
@@ -111,11 +174,10 @@
         if (r >= 0 && !c.slice(f, r).some((x) => x && (x.s === 'Y' || x.s === 'K'))) infos[s].startup = r - f + 1;
         if (done && !c.some((x) => x && (x.s === 'Y' || x.s === 'K'))) infos[s].total = last(c) - f + 1;
       }
-      const hit = [this.contact[0], this.contact[1]];
-      if (done && (hit[0] === null) !== (hit[1] === null)) {
-        const d = hit[0] ? 0 : 1, a = 1 - d;
-        const adv = last(this.cells[d]) - last(this.cells[a]);
-        infos[a].adv = adv; infos[d].adv = -adv; infos[a].kind = infos[d].kind = hit[d];
+      if (done && this.winResult) {
+        const adv = this.winResult.adv;
+        infos[0].adv = adv; infos[1].adv = -adv;
+        infos[0].kind = infos[1].kind = this.winResult.kind;
       }
       this.info = infos;
     }
@@ -136,7 +198,7 @@
     return out;
   }
 
-  const api = { Meter, runs, WINDOW, REC, PLAYER_BYTES, EXTRA_BYTES };
+  const api = { Meter, runs, readSide, WINDOW, REC, PLAYER_BYTES, EXTRA_BYTES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.KofFrameMeterCore = api;
 
@@ -146,7 +208,8 @@
   if (!params.has('framemeter') || params.get('framemeter') === '0') return;
 
   const num = (v, d) => { if (v == null || v === '') return d; const n = Number(v); return Number.isFinite(n) ? n : d; };
-  const meter = new Meter({ actOffset: num(params.get('fm_act'), 0xEC), neutralMax: num(params.get('fm_neutral'), 26) });
+  const legacy = params.get('fm_model') === 'legacy' || params.has('fm_neutral');
+  const meter = new Meter({ actOffset: num(params.get('fm_act'), ACT_OFFSET), neutralMax: num(params.get('fm_neutral'), 26), legacy });
   const learn = params.get('fm_learn') === '1';
   const COLORS = { G: '#1fc8a0', R: '#d6336c', B: '#1c70d6', Y: '#ffe600', K: '#fff59d' };
   const CELL = 8, LEFT = 10, BAR_H = 14, W = LEFT * 2 + WINDOW * CELL, H = learn ? 230 : 118;
@@ -182,7 +245,10 @@
       const p = sd.p, ex = sd.ex, dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
       const act = meter.actOffset;
       row.sides.push({
-        char: ex[0], point: sd.point, act: p[act], prev: p[act + 2], hb: p[HB_OFFSET], hp: ex[4] | (ex[5] << 8), guard: ex[0xA] | (ex[0xB] << 8),
+        char: ex[0], point: sd.point, act: p[act], prev: p[act + 2], hb: p[HB_OFFSET],
+        f490: dv.getUint32(F_ATTACK, true), f494: dv.getUint32(F_STATE, true), f530: dv.getUint32(F_GUARD, true), f48c: dv.getUint32(F_MOVE, true), pose: p[POSE_OFFSET] & 0xF,
+        busy: meter.raw[s].busy | 0, react: meter.raw[s].react | 0, hs: meter.raw[s].hs | 0,
+        hp: ex[4] | (ex[5] << 8), guard: ex[0xA] | (ex[0xB] << 8),
         stunGauge: ex[8] | (ex[9] << 8), stunTimer: dv.getInt16(0x582, true), w1c0: dv.getUint16(0x1C0, true), b4f0: p[0x4F0], facing: p[0x8C],
         x: dv.getFloat32(0, true), y: dv.getFloat32(4, true), pad: sd.pad, combo: sd.combo, cell: (meter.state && meter.state[s]) || '',
         raw: full ? hexs(p) : null,
@@ -195,7 +261,7 @@
     recording = on === undefined ? !recording : on;
     if (recording) { rows = []; markerNext = 1; pendingMarker = ''; recStart = performance.now(); }
   }
-  const COLS = ['char', 'point', 'act', 'prev', 'hb', 'hp', 'guard', 'stunGauge', 'stunTimer', 'w1c0', 'b4f0', 'facing', 'x', 'y', 'pad', 'combo', 'cell'];
+  const COLS = ['char', 'point', 'act', 'prev', 'hb', 'f490', 'f494', 'f530', 'f48c', 'pose', 'busy', 'react', 'hs', 'hp', 'guard', 'stunGauge', 'stunTimer', 'w1c0', 'b4f0', 'facing', 'x', 'y', 'pad', 'combo', 'cell'];
   function download(name, text, type) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: type || 'text/plain' }));
@@ -210,10 +276,10 @@
     const lines = [head.join(',')];
     for (const r of rows) {
       const cells = [r.frame, '0x' + r.scene.toString(16), r.mode, r.marker];
-      for (const sd of r.sides) for (const c of COLS) cells.push(sd ? (typeof sd[c] === 'number' && c === 'pad' ? '0x' + sd[c].toString(16).padStart(4, '0') : sd[c]) : '');
+      for (const sd of r.sides) for (const c of COLS) cells.push(sd ? (typeof sd[c] === 'number' && (c === 'pad' || c === 'f490' || c === 'f494' || c === 'f530' || c === 'f48c') ? '0x' + sd[c].toString(16) : sd[c]) : '');
       lines.push(cells.join(','));
     }
-    const note = '# KOF XI frame meter recording; act offset +0x' + meter.actOffset.toString(16) + ', neutral <= ' + meter.neutralMax + ', ' + rows.length + ' frames\n';
+    const note = '# KOF XI frame meter recording; model ' + (meter.legacy ? 'legacy act<= ' + meter.neutralMax : 'engine') + ', act offset +0x' + meter.actOffset.toString(16) + ', ' + rows.length + ' frames\n';
     download('fm-rec-' + stamp + '.csv', note + lines.join('\n') + '\n', 'text/csv');
     if (full) download('fm-rec-' + stamp + '-full.json', JSON.stringify({ actOffset: meter.actOffset, rows: rows.map((r) => ({ frame: r.frame, marker: r.marker, p: r.sides.map((sd) => sd && sd.raw) })) }), 'application/json');
   }
@@ -306,10 +372,11 @@
     else {
       const inCombat = (rec.scene & 0xFF) === SCENE_COMBAT;
       if (recording) text('REC ' + rows.length + 'f', W - 70, 88, '#ff5555');
-      text('FRAME METER (experimental)  scene ' + hex(rec.scene, 4) + ' mode ' + hex(rec.mode) + (inCombat ? '' : '  (not in a fight)'), LEFT, 88, '#aaa');
-      const p = (s) => R[s].act == null ? 'P' + (s + 1) + ' -' : 'P' + (s + 1) + ' act[+' + hex(meter.actOffset, 3) + ']=' + R[s].act + ' hb=' + hex(R[s].hb) + ' hp=' + R[s].hp + ' grd=' + R[s].guard;
-      text(p(0) + '   ' + p(1), LEFT, 101, '#aaa');
-      text('F8 hide  F9 ' + (recording ? 'stop' : 'record') + '  F7 marker  F10 save' + (rows.length && !recording ? ' (' + rows.length + 'f)' : '') + '   neutral <= ' + meter.neutralMax, LEFT, 113, '#777');
+      text('FRAME METER (experimental)  scene ' + hex(rec.scene, 4) + ' mode ' + hex(rec.mode) + (inCombat ? '' : '  (not in a fight)') + (meter.legacy ? '  legacy' : ''), LEFT, 88, '#aaa');
+      const p = (s) => R[s].act == null ? 'P' + (s + 1) + ' -' : 'P' + (s + 1) + ' act=' + R[s].act + ' hb=' + hex(R[s].hb) + ' hp=' + R[s].hp + ' grd=' + R[s].guard + ' 490=' + hex(R[s].f490, 8) + ' 494=' + hex(R[s].f494, 8) + ' 530=' + hex(R[s].f530, 8) + ' 48c=' + hex(R[s].f48c, 8) + (R[s].busy ? ' BUSY' : ' free');
+      text(p(0), LEFT, 101, '#aaa');
+      text(p(1), LEFT, 112, '#aaa');
+      text('F8 hide  F9 ' + (recording ? 'stop' : 'record') + '  F7 marker  F10 save' + (rows.length && !recording ? ' (' + rows.length + 'f)' : '') + '   busy = 490&3 | 494.27 | 494.0 | 530.400 | pose 2 | 48c', LEFT, 124, '#777');
     }
     if (learn) {
       g.font = '10px monospace';

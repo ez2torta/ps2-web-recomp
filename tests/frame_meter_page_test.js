@@ -10,6 +10,7 @@ function writeFrame(f, act0, hb0, act1, pad) {
   dv.setUint32(o, f, true); dv.setUint16(o + 4, 0x303, true); u8[o + 6] = 8; u8[o + 7] = 3;
   for (let s = 0; s < 2; s++) {
     u8[o + 0x10 + s * 0x600 + 0xEC] = s ? act1 : act0; u8[o + 0x10 + s * 0x600 + 0x39E] = s ? 0 : hb0;
+    dv.setUint32(o + 0x10 + s * 0x600 + 0x490, (s ? act1 : act0) ? 1 : 0, true);  // any action id = an attack action here
     const e = o + 0xC10 + s * 0x20; u8[e] = s ? 0x20 : 0; dv.setUint16(e + 4, 112, true); dv.setUint16(e + 0xA, 112, true);
     dv.setUint16(o + 0xC52 + s * 2, s ? 0 : pad, true);
   }
